@@ -23,7 +23,7 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 import org.apache.pdfbox.util.Charsets;
-
+import org.apache.pdfbox.util.Hex;
 
 /**
  * A PDF Name object.
@@ -36,8 +36,8 @@ public final class COSName extends COSBase implements Comparable<COSName>
     private static Map<String, COSName> nameMap = new ConcurrentHashMap<String, COSName>(8192);
 
     // all common COSName values are stored in this HashMap
-    // hey are already defined as static constants and don't need to be synchronized
-    private static Map<String, COSName> commonNameMap = new HashMap<String, COSName>();
+    // they are already defined as static constants and don't need to be synchronized
+    private static Map<String, COSName> commonNameMap = new HashMap<String, COSName>(768);
 
     //
     // IMPORTANT: this list is *alphabetized* and does not need any JavaDoc
@@ -52,6 +52,7 @@ public final class COSName extends COSBase implements Comparable<COSName>
     public static final COSName ADBE_PKCS7_SHA1 = new COSName("adbe.pkcs7.sha1");
     public static final COSName ADBE_X509_RSA_SHA1 = new COSName("adbe.x509.rsa_sha1");
     public static final COSName ADOBE_PPKLITE = new COSName("Adobe.PPKLite");
+    public static final COSName AESV2 = new COSName("AESV2");
     public static final COSName AESV3 = new COSName("AESV3");
     public static final COSName AFTER = new COSName("After");
     public static final COSName AIS = new COSName("AIS");
@@ -83,6 +84,7 @@ public final class COSName extends COSBase implements Comparable<COSName>
     public static final COSName BASE_STATE = new COSName("BaseState");
     public static final COSName BBOX = new COSName("BBox");
     public static final COSName BC = new COSName("BC");
+    public static final COSName BE = new COSName("BE");
     public static final COSName BEFORE = new COSName("Before");
     public static final COSName BG = new COSName("BG");
     public static final COSName BITS_PER_COMPONENT = new COSName("BitsPerComponent");
@@ -93,6 +95,7 @@ public final class COSName extends COSBase implements Comparable<COSName>
     public static final COSName BLACK_POINT = new COSName("BlackPoint");
     public static final COSName BLEED_BOX = new COSName("BleedBox");
     public static final COSName BM = new COSName("BM");
+    public static final COSName BORDER = new COSName("Border");
     public static final COSName BOUNDS = new COSName("Bounds");
     public static final COSName BPC = new COSName("BPC");
     public static final COSName BS = new COSName("BS");
@@ -107,6 +110,7 @@ public final class COSName extends COSBase implements Comparable<COSName>
     public static final COSName CA_NS = new COSName("ca");
     public static final COSName CALGRAY = new COSName("CalGray");
     public static final COSName CALRGB = new COSName("CalRGB");
+    public static final COSName CAP = new COSName("Cap");
     public static final COSName CAP_HEIGHT = new COSName("CapHeight");
     public static final COSName CATALOG = new COSName("Catalog");
     public static final COSName CCITTFAX_DECODE = new COSName("CCITTFaxDecode");
@@ -124,11 +128,13 @@ public final class COSName extends COSBase implements Comparable<COSName>
     public static final COSName CID_TO_GID_MAP = new COSName("CIDToGIDMap");
     public static final COSName CID_SET = new COSName("CIDSet");
     public static final COSName CIDSYSTEMINFO = new COSName("CIDSystemInfo");
+    public static final COSName CL = new COSName("CL");
     public static final COSName CLR_F = new COSName("ClrF");
     public static final COSName CLR_FF = new COSName("ClrFf");
     public static final COSName CMAP = new COSName("CMap");
     public static final COSName CMAPNAME = new COSName("CMapName");
     public static final COSName CMYK = new COSName("CMYK");
+    public static final COSName CO = new COSName("CO");
     public static final COSName COLOR_BURN = new COSName("ColorBurn");
     public static final COSName COLOR_DODGE = new COSName("ColorDodge");
     public static final COSName COLORANTS = new COSName("Colorants");
@@ -141,6 +147,7 @@ public final class COSName extends COSBase implements Comparable<COSName>
     public static final COSName CONTENTS = new COSName("Contents");
     public static final COSName COORDS = new COSName("Coords");
     public static final COSName COUNT = new COSName("Count");
+    public static final COSName CP = new COSName("CP");
     public static final COSName CREATION_DATE = new COSName("CreationDate");
     public static final COSName CREATOR = new COSName("Creator");
     public static final COSName CROP_BOX = new COSName("CropBox");
@@ -272,6 +279,7 @@ public final class COSName extends COSBase implements Comparable<COSName>
     public static final COSName ID_TREE = new COSName("IDTree");
     public static final COSName IDENTITY = new COSName("Identity");
     public static final COSName IDENTITY_H = new COSName("Identity-H");
+    public static final COSName IDENTITY_V = new COSName("Identity-V");
     public static final COSName IF = new COSName("IF");
     public static final COSName IM = new COSName("IM");
     public static final COSName IMAGE = new COSName("Image");
@@ -279,13 +287,16 @@ public final class COSName extends COSBase implements Comparable<COSName>
     public static final COSName INDEX = new COSName("Index");
     public static final COSName INDEXED = new COSName("Indexed");
     public static final COSName INFO = new COSName("Info");
+    public static final COSName INKLIST = new COSName("InkList");
     public static final COSName INTERPOLATE = new COSName("Interpolate");
+    public static final COSName IT = new COSName("IT");
     public static final COSName ITALIC_ANGLE = new COSName("ItalicAngle");
     // J
     public static final COSName JAVA_SCRIPT = new COSName("JavaScript");
     public static final COSName JBIG2_DECODE = new COSName("JBIG2Decode");
     public static final COSName JBIG2_GLOBALS = new COSName("JBIG2Globals");
     public static final COSName JPX_DECODE = new COSName("JPXDecode");
+    public static final COSName JS = new COSName("JS");
     // K
     public static final COSName K = new COSName("K");
     public static final COSName KEYWORDS = new COSName("Keywords");
@@ -298,6 +309,7 @@ public final class COSName extends COSBase implements Comparable<COSName>
     public static final COSName LAST_CHAR = new COSName("LastChar");
     public static final COSName LAST_MODIFIED = new COSName("LastModified");
     public static final COSName LC = new COSName("LC");
+    public static final COSName LE = new COSName("LE");
     public static final COSName LEADING = new COSName("Leading");
     public static final COSName LEGAL_ATTESTATION = new COSName("LegalAttestation");
     public static final COSName LENGTH = new COSName("Length");
@@ -306,6 +318,9 @@ public final class COSName extends COSBase implements Comparable<COSName>
     public static final COSName LIGHTEN = new COSName("Lighten");
     public static final COSName LIMITS = new COSName("Limits");
     public static final COSName LJ = new COSName("LJ");
+    public static final COSName LL = new COSName("LL");
+    public static final COSName LLE = new COSName("LLE");
+    public static final COSName LLO = new COSName("LLO");
     public static final COSName LOCATION = new COSName("Location");
     public static final COSName LUMINOSITY = new COSName("Luminosity");
     public static final COSName LW = new COSName("LW");
@@ -314,6 +329,7 @@ public final class COSName extends COSBase implements Comparable<COSName>
     // M
     public static final COSName M = new COSName("M");
     public static final COSName MAC = new COSName("Mac");
+    public static final COSName MAC_EXPERT_ENCODING = new COSName("MacExpertEncoding");
     public static final COSName MAC_ROMAN_ENCODING = new COSName("MacRomanEncoding");
     public static final COSName MARK_INFO = new COSName("MarkInfo");
     public static final COSName MASK = new COSName("Mask");
@@ -325,6 +341,7 @@ public final class COSName extends COSBase implements Comparable<COSName>
     public static final COSName MEDIA_BOX = new COSName("MediaBox");
     public static final COSName METADATA = new COSName("Metadata");
     public static final COSName MISSING_WIDTH = new COSName("MissingWidth");
+    public static final COSName MIX = new COSName("Mix");
     public static final COSName MK = new COSName("MK");
     public static final COSName ML = new COSName("ML");
     public static final COSName MM_TYPE1 = new COSName("MMType1");
@@ -351,7 +368,17 @@ public final class COSName extends COSBase implements Comparable<COSName>
     public static final COSName OCGS = new COSName("OCGs");
     public static final COSName OCPROPERTIES = new COSName("OCProperties");
     public static final COSName OE = new COSName("OE");
+    
+    /**
+     * "OFF", to be used for OCGs, not for Acroform
+     */
     public static final COSName OFF = new COSName("OFF");
+    
+    /**
+     * "Off", to be used for Acroform, not for OCGs
+     */
+    public static final COSName Off = new COSName("Off");    
+    
     public static final COSName ON = new COSName("ON");
     public static final COSName OP = new COSName("OP");
     public static final COSName OP_NS = new COSName("op");
@@ -364,7 +391,8 @@ public final class COSName extends COSBase implements Comparable<COSName>
     public static final COSName OS = new COSName("OS");
     public static final COSName OUTLINES = new COSName("Outlines");
     public static final COSName OUTPUT_CONDITION = new COSName("OutputCondition");
-    public static final COSName OUTPUT_CONDITION_IDENTIFIER = new COSName("OutputConditionIdentifier");
+    public static final COSName OUTPUT_CONDITION_IDENTIFIER = new COSName(
+            "OutputConditionIdentifier");
     public static final COSName OUTPUT_INTENT = new COSName("OutputIntent");
     public static final COSName OUTPUT_INTENTS = new COSName("OutputIntents");
     public static final COSName OVERLAY = new COSName("Overlay");
@@ -376,6 +404,7 @@ public final class COSName extends COSBase implements Comparable<COSName>
     public static final COSName PAGE_MODE = new COSName("PageMode");
     public static final COSName PAGES = new COSName("Pages");
     public static final COSName PAINT_TYPE = new COSName("PaintType");
+    public static final COSName PANOSE = new COSName("Panose");    
     public static final COSName PARAMS = new COSName("Params");
     public static final COSName PARENT = new COSName("Parent");
     public static final COSName PARENT_TREE = new COSName("ParentTree");
@@ -400,11 +429,15 @@ public final class COSName extends COSBase implements Comparable<COSName>
     public static final COSName PUB_SEC = new COSName("PubSec");
     // Q
     public static final COSName Q = new COSName("Q");
+    public static final COSName QUADPOINTS = new COSName("QuadPoints");
     // R
     public static final COSName R = new COSName("R");
     public static final COSName RANGE = new COSName("Range");
+    public static final COSName RC = new COSName("RC");
+    public static final COSName RD = new COSName("RD");
     public static final COSName REASON = new COSName("Reason");
     public static final COSName REASONS = new COSName("Reasons");
+    public static final COSName REPEAT = new COSName("Repeat");
     public static final COSName RECIPIENTS = new COSName("Recipients");
     public static final COSName RECT = new COSName("Rect");
     public static final COSName REGISTRY = new COSName("Registry");
@@ -436,9 +469,12 @@ public final class COSName extends COSBase implements Comparable<COSName>
     public static final COSName SM = new COSName("SM");
     public static final COSName SMASK = new COSName("SMask");
     public static final COSName SOFT_LIGHT = new COSName("SoftLight");
+    public static final COSName SOUND = new COSName("Sound");
     public static final COSName SS = new COSName("SS");
     public static final COSName ST = new COSName("St");
     public static final COSName STANDARD_ENCODING = new COSName("StandardEncoding");
+    public static final COSName STATE = new COSName("State");
+    public static final COSName STATE_MODEL = new COSName("StateModel");
     public static final COSName STATUS = new COSName("Status");
     public static final COSName STD_CF = new COSName("StdCF");
     public static final COSName STEM_H = new COSName("StemH");
@@ -448,6 +484,7 @@ public final class COSName extends COSBase implements Comparable<COSName>
     public static final COSName STRUCT_PARENT = new COSName("StructParent");
     public static final COSName STRUCT_PARENTS = new COSName("StructParents");
     public static final COSName STRUCT_TREE_ROOT = new COSName("StructTreeRoot");
+    public static final COSName STYLE = new COSName("Style");
     public static final COSName SUB_FILTER = new COSName("SubFilter");
     public static final COSName SUBJ = new COSName("Subj");
     public static final COSName SUBJECT = new COSName("Subject");
@@ -455,11 +492,14 @@ public final class COSName extends COSBase implements Comparable<COSName>
     public static final COSName SUPPLEMENT = new COSName("Supplement");
     public static final COSName SV = new COSName("SV");
     public static final COSName SW = new COSName("SW");
+    public static final COSName SY = new COSName("Sy");
+    public static final COSName SYNCHRONOUS = new COSName("Synchronous");
     // T
     public static final COSName T = new COSName("T");
     public static final COSName TARGET = new COSName("Target");
     public static final COSName TEMPLATES = new COSName("Templates");
     public static final COSName THREADS = new COSName("Threads");
+    public static final COSName THUMB = new COSName("Thumb");
     public static final COSName TI = new COSName("TI");
     public static final COSName TILING_TYPE = new COSName("TilingType");
     public static final COSName TIME_STAMP = new COSName("TimeStamp");
@@ -468,6 +508,7 @@ public final class COSName extends COSBase implements Comparable<COSName>
     public static final COSName TM = new COSName("TM");
     public static final COSName TO_UNICODE = new COSName("ToUnicode");
     public static final COSName TR = new COSName("TR");
+    public static final COSName TR2 = new COSName("TR2");
     public static final COSName TRAPPED = new COSName("Trapped");
     public static final COSName TRANS = new COSName("Trans");
     public static final COSName TRANSPARENCY = new COSName("Transparency");
@@ -494,14 +535,17 @@ public final class COSName extends COSBase implements Comparable<COSName>
     public static final COSName V = new COSName("V");
     public static final COSName VERISIGN_PPKVS = new COSName("VeriSign.PPKVS");
     public static final COSName VERSION = new COSName("Version");
+    public static final COSName VERTICES = new COSName("Vertices");
     public static final COSName VERTICES_PER_ROW = new COSName("VerticesPerRow");
     public static final COSName VIEW_AREA = new COSName("ViewArea");
     public static final COSName VIEW_CLIP = new COSName("ViewClip");
     public static final COSName VIEWER_PREFERENCES = new COSName("ViewerPreferences");
+    public static final COSName VOLUME = new COSName("Volume");
     // W
     public static final COSName W = new COSName("W");
     public static final COSName W2 = new COSName("W2");
     public static final COSName WHITE_POINT = new COSName("WhitePoint");
+    public static final COSName WIDGET = new COSName("Widget");
     public static final COSName WIDTH = new COSName("Width");
     public static final COSName WIDTHS = new COSName("Widths");
     public static final COSName WIN_ANSI_ENCODING = new COSName("WinAnsiEncoding");
@@ -514,6 +558,7 @@ public final class COSName extends COSBase implements Comparable<COSName>
     public static final COSName XREF_STM = new COSName("XRefStm");
     // Y
     public static final COSName Y_STEP = new COSName("YStep");
+    public static final COSName YES = new COSName("Yes");
 
     // fields
     private final String name;
@@ -659,7 +704,7 @@ public final class COSName extends COSBase implements Comparable<COSName>
             else
             {
                 output.write('#');
-                output.write(String.format("%02X", current).getBytes(Charsets.US_ASCII));
+                Hex.writeHexByte(b, output);
             }
         }
     }

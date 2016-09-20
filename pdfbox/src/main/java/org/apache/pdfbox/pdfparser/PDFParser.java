@@ -16,8 +16,6 @@
  */
 package org.apache.pdfbox.pdfparser;
 
-import java.io.ByteArrayInputStream;
-import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.security.KeyStore;
@@ -31,8 +29,8 @@ import org.apache.pdfbox.cos.COSName;
 import org.apache.pdfbox.cos.COSNull;
 import org.apache.pdfbox.cos.COSObject;
 import org.apache.pdfbox.io.IOUtils;
-import org.apache.pdfbox.io.PushBackInputStream;
-import org.apache.pdfbox.io.RandomAccessBufferedFileInputStream;
+import org.apache.pdfbox.io.RandomAccessRead;
+import org.apache.pdfbox.io.ScratchFile;
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.pdmodel.encryption.AccessPermission;
 import org.apache.pdfbox.pdmodel.encryption.DecryptionMaterial;
@@ -44,228 +42,107 @@ public class PDFParser extends COSParser
 {
     private static final Log LOG = LogFactory.getLog(PDFParser.class);
 
-    private final RandomAccessBufferedFileInputStream raStream;
     private String password = "";
     private InputStream keyStoreInputStream = null;
     private String keyAlias = null;
 
+    private PDEncryption encryption = null;    
     private AccessPermission accessPermission;
 
-    private static final InputStream EMPTY_INPUT_STREAM = new ByteArrayInputStream(new byte[0]);
-
-    private File tempPDFFile;
-
     /**
-     * Constructs parser for given file using memory buffer.
+     * Constructor.
+     * Unrestricted main memory will be used for buffering PDF streams.
      * 
-     * @param filename the filename of the pdf to be parsed
-     * 
+     * @param source source representing the pdf.
      * @throws IOException If something went wrong.
      */
-    public PDFParser(String filename) throws IOException
+    public PDFParser(RandomAccessRead source) throws IOException
     {
-        this(new File(filename), null, false);
-    }
-
-    /**
-     * Constructs parser for given file using memory buffer.
-     * 
-     * @param filename the filename of the pdf to be parsed.
-     * @param useScratchFiles use a buffer for temporary storage.
-     * 
-     * @throws IOException If something went wrong.
-     */
-    public PDFParser(String filename, boolean useScratchFiles) throws IOException
-    {
-        this(new File(filename), null, useScratchFiles);
-    }
-
-    /**
-     * Constructs parser for given file using given buffer for temporary
-     * storage.
-     * 
-     * @param file the pdf to be parsed
-     * 
-     * @throws IOException If something went wrong.
-     */
-    public PDFParser(File file) throws IOException
-    {
-        this(file, "", false);
-    }
-
-    /**
-     * Constructs parser for given file using given buffer for temporary
-     * storage.
-     * 
-     * @param file the pdf to be parsed
-     * @param useScratchFiles use a buffer for temporary storage.
-     * 
-     * @throws IOException If something went wrong.
-     */
-    public PDFParser(File file, boolean useScratchFiles) throws IOException
-    {
-        this(file, "", useScratchFiles);
-    }
-
-    /**
-     * Constructs parser for given file using given buffer for temporary storage.
-     * 
-     * @param file the pdf to be parsed
-     * @param decryptionPassword password to be used for decryption
-     * 
-     * @throws IOException If something went wrong.
-     */
-    public PDFParser(File file, String decryptionPassword) throws IOException
-    {
-        this (file, decryptionPassword, false);
-    }
-
-    /**
-     * Constructs parser for given file using given buffer for temporary storage.
-     * 
-     * @param file the pdf to be parsed.
-     * @param decryptionPassword password to be used for decryption.
-     * @param useScratchFiles use a buffer for temporary storage.
-     * 
-     * @throws IOException If something went wrong.
-     */
-    public PDFParser(File file, String decryptionPassword, boolean useScratchFiles)
-            throws IOException
-    {
-        this(file, decryptionPassword, null, null, useScratchFiles);
-    }
-
-    /**
-     * Constructs parser for given file using given buffer for temporary storage.
-     * 
-     * @param file the pdf to be parsed.
-     * @param decryptionPassword password to be used for decryption.
-     * @param keyStore key store to be used for decryption when using public key security 
-     * @param alias alias to be used for decryption when using public key security
-     * 
-     * @throws IOException If something went wrong.
-     */
-    public PDFParser(File file, String decryptionPassword, InputStream keyStore, String alias)
-            throws IOException
-    {
-        this(file, decryptionPassword, keyStore, alias, false);
-    }
-
-    /**
-     * Constructs parser for given file using given buffer for temporary storage.
-     * 
-     * @param file the pdf to be parsed.
-     * @param decryptionPassword password to be used for decryption.
-     * @param keyStore key store to be used for decryption when using public key security 
-     * @param alias alias to be used for decryption when using public key security
-     * @param useScratchFiles use a buffer for temporary storage.
-     * 
-     * @throws IOException If something went wrong.
-     */
-    public PDFParser(File file, String decryptionPassword, InputStream keyStore, String alias,
-            boolean useScratchFiles) throws IOException
-    {
-        super(EMPTY_INPUT_STREAM);
-        fileLen = file.length();
-        raStream = new RandomAccessBufferedFileInputStream(file);
-        password = decryptionPassword;
-        keyStoreInputStream = keyStore;
-        keyAlias = alias;
-        init(useScratchFiles);
+        this(source, "", ScratchFile.getMainMemoryOnlyInstance());
     }
 
     /**
      * Constructor.
      * 
-     * @param input input stream representing the pdf.
+     * @param source input representing the pdf.
+     * @param scratchFile use a {@link ScratchFile} for temporary storage.
+     * 
      * @throws IOException If something went wrong.
      */
-    public PDFParser(InputStream input) throws IOException
+    public PDFParser(RandomAccessRead source, ScratchFile scratchFile) throws IOException
     {
-        this(input, "", false);
+        this(source, "", scratchFile);
     }
 
     /**
      * Constructor.
+     * Unrestricted main memory will be used for buffering PDF streams.
      * 
-     * @param input input stream representing the pdf.
-     * @param useScratchFiles use a buffer for temporary storage.
-     * 
-     * @throws IOException If something went wrong.
-     */
-    public PDFParser(InputStream input, boolean useScratchFiles) throws IOException
-    {
-        this(input, "", useScratchFiles);
-    }
-
-    /**
-     * Constructor.
-     * 
-     * @param input input stream representing the pdf.
+     * @param source input representing the pdf.
      * @param decryptionPassword password to be used for decryption.
      * @throws IOException If something went wrong.
      */
-    public PDFParser(InputStream input, String decryptionPassword) throws IOException
+    public PDFParser(RandomAccessRead source, String decryptionPassword) throws IOException
     {
-        this(input, decryptionPassword, false);
+        this(source, decryptionPassword, ScratchFile.getMainMemoryOnlyInstance());
     }
 
     /**
      * Constructor.
      * 
-     * @param input input stream representing the pdf.
+     * @param source input representing the pdf.
      * @param decryptionPassword password to be used for decryption.
-     * @param useScratchFiles use a buffer for temporary storage.
+     * @param scratchFile use a {@link ScratchFile} for temporary storage.
      *
      * @throws IOException If something went wrong.
      */
-    public PDFParser(InputStream input, String decryptionPassword, boolean useScratchFiles)
+    public PDFParser(RandomAccessRead source, String decryptionPassword, ScratchFile scratchFile)
             throws IOException
     {
-        this(input, decryptionPassword, null, null, useScratchFiles);
+        this(source, decryptionPassword, null, null, scratchFile);
     }
 
     /**
      * Constructor.
+     * Unrestricted main memory will be used for buffering PDF streams.
      * 
-     * @param input input stream representing the pdf.
+     * @param source input representing the pdf.
      * @param decryptionPassword password to be used for decryption.
      * @param keyStore key store to be used for decryption when using public key security 
      * @param alias alias to be used for decryption when using public key security
      *
      * @throws IOException If something went wrong.
      */
-    public PDFParser(InputStream input, String decryptionPassword, InputStream keyStore,
+    public PDFParser(RandomAccessRead source, String decryptionPassword, InputStream keyStore,
             String alias) throws IOException
     {
-        this(input, decryptionPassword, keyStore, alias, false);
+        this(source, decryptionPassword, keyStore, alias, ScratchFile.getMainMemoryOnlyInstance());
     }
 
     /**
      * Constructor.
      * 
-     * @param input input stream representing the pdf.
+     * @param source input representing the pdf.
      * @param decryptionPassword password to be used for decryption.
      * @param keyStore key store to be used for decryption when using public key security 
      * @param alias alias to be used for decryption when using public key security
-     * @param useScratchFiles use a buffer for temporary storage.
+     * @param scratchFile buffer handler for temporary storage; it will be closed on
+     *        {@link COSDocument#close()}
      *
      * @throws IOException If something went wrong.
      */
-    public PDFParser(InputStream input, String decryptionPassword, InputStream keyStore,
-            String alias, boolean useScratchFiles) throws IOException
+    public PDFParser(RandomAccessRead source, String decryptionPassword, InputStream keyStore,
+                     String alias, ScratchFile scratchFile) throws IOException
     {
-        super(EMPTY_INPUT_STREAM);
-        tempPDFFile = createTmpFile(input);
-        fileLen = tempPDFFile.length();
-        raStream = new RandomAccessBufferedFileInputStream(tempPDFFile);
+        super(source);
+        fileLen = source.length();
         password = decryptionPassword;
         keyStoreInputStream = keyStore;
         keyAlias = alias;
-        init(useScratchFiles);
+        init(scratchFile);
     }
-
-    private void init(boolean useScratchFiles) throws IOException
+    
+    private void init(ScratchFile scratchFile) throws IOException
     {
         String eofLookupRangeStr = System.getProperty(SYSPROP_EOFLOOKUPRANGE);
         if (eofLookupRangeStr != null)
@@ -280,10 +157,9 @@ public class PDFParser extends COSParser
                         + " does not contain an integer value, but: '" + eofLookupRangeStr + "'");
             }
         }
-        document = new COSDocument(useScratchFiles);
-        pdfSource = new PushBackInputStream(raStream, 4096);
+        document = new COSDocument(scratchFile);
     }
-
+    
     /**
      * This will get the PD document that was parsed.  When you are done with
      * this document you must call close() on it to release resources.
@@ -294,7 +170,9 @@ public class PDFParser extends COSParser
      */
     public PDDocument getPDDocument() throws IOException
     {
-        return new PDDocument( getDocument(), this, accessPermission );
+        PDDocument doc = new PDDocument(getDocument(), source, accessPermission);
+        doc.setEncryptionDictionary(encryption);
+        return doc;
     }
 
     /**
@@ -320,30 +198,28 @@ public class PDFParser extends COSParser
         // prepare decryption if necessary
         prepareDecryption();
     
-        // PDFBOX-1557 - ensure that all COSObject are loaded in the trailer
-        // PDFBOX-1606 - after securityHandler has been instantiated
-        for (COSBase trailerEntry : trailer.getValues())
+        COSBase base = parseTrailerValuesDynamically(trailer);
+        if (!(base instanceof COSDictionary))
         {
-            if (trailerEntry instanceof COSObject)
-            {
-                COSObject tmpObj = (COSObject) trailerEntry;
-                parseObjectDynamically(tmpObj, false);
-            }
+            throw new IOException("Expected root dictionary, but got this: " + base);
         }
-        // parse catalog or root object
-        COSObject root = (COSObject) trailer.getItem(COSName.ROOT);
-    
-        if (root == null)
+        COSDictionary root = (COSDictionary) base;
+        // in some pdfs the type value "Catalog" is missing in the root object
+        if (isLenient() && !root.containsKey(COSName.TYPE))
         {
-            throw new IOException("Missing root object specification in trailer.");
+            root.setItem(COSName.TYPE, COSName.CATALOG);
         }
-    
-        parseObjectDynamically(root, false);
-    
         COSObject catalogObj = document.getCatalog();
         if (catalogObj != null && catalogObj.getObject() instanceof COSDictionary)
         {
             parseDictObjects((COSDictionary) catalogObj.getObject(), (COSName[]) null);
+            
+            COSBase infoBase = trailer.getDictionaryObject(COSName.INFO);
+            if (infoBase instanceof COSDictionary)
+            {
+                parseDictObjects((COSDictionary) infoBase, (COSName[]) null);
+            }
+            
             document.setDecrypted();
         }
         initialParseDone = true;
@@ -351,7 +227,7 @@ public class PDFParser extends COSParser
 
     /**
      * This will parse the stream and populate the COSDocument object.  This will close
-     * the stream when it is done parsing.
+     * the keystore stream when it is done parsing.
      *
      * @throws IOException If there is an error reading from the stream or corrupt data
      * is found.
@@ -376,42 +252,12 @@ public class PDFParser extends COSParser
         }
         finally
         {
-            IOUtils.closeQuietly(pdfSource);
             IOUtils.closeQuietly(keyStoreInputStream);
-    
-            deleteTempFile();
     
             if (exceptionOccurred && document != null)
             {
-                try
-                {
-                    document.close();
-                    document = null;
-                }
-                catch (IOException ioe)
-                {
-                }
-            }
-        }
-    }
-
-    /**
-     * Remove the temporary file. A temporary file is created if this class is instantiated with an InputStream
-     */
-    private void deleteTempFile()
-    {
-        if (tempPDFFile != null)
-        {
-            try
-            {
-                if (!tempPDFFile.delete())
-                {
-                    LOG.warn("Temporary file '" + tempPDFFile.getName() + "' can't be deleted");
-                }
-            }
-            catch (SecurityException e)
-            {
-                LOG.warn("Temporary file '" + tempPDFFile.getName() + "' can't be deleted", e);
+                IOUtils.closeQuietly(document);
+                document = null;
             }
         }
     }
@@ -433,8 +279,7 @@ public class PDFParser extends COSParser
             }
             try
             {
-                PDEncryption encryption = new PDEncryption(document.getEncryptionDictionary());
-    
+                encryption = new PDEncryption(document.getEncryptionDictionary());
                 DecryptionMaterial decryptionMaterial;
                 if (keyStoreInputStream != null)
                 {

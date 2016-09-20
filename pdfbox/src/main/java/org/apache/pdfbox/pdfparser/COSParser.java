@@ -16,17 +16,14 @@
  */
 package org.apache.pdfbox.pdfparser;
 
-import java.io.File;
-import java.io.FileOutputStream;
 import java.io.IOException;
-import java.io.InputStream;
 import java.io.OutputStream;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
-import java.util.Iterator;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
@@ -35,7 +32,6 @@ import java.util.Queue;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.Vector;
-
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.pdfbox.cos.COSArray;
@@ -48,9 +44,12 @@ import org.apache.pdfbox.cos.COSNumber;
 import org.apache.pdfbox.cos.COSObject;
 import org.apache.pdfbox.cos.COSObjectKey;
 import org.apache.pdfbox.cos.COSStream;
-import org.apache.pdfbox.io.IOUtils;
+import org.apache.pdfbox.io.RandomAccessRead;
 import org.apache.pdfbox.pdfparser.XrefTrailerResolver.XRefType;
 import org.apache.pdfbox.pdmodel.encryption.SecurityHandler;
+
+
+import static org.apache.pdfbox.util.Charsets.ISO_8859_1;
 
 /**
  * PDF-Parser which first reads startxref and xref tables in order to know valid objects and parse only these objects.
@@ -73,10 +72,19 @@ public class COSParser extends BaseParser
     private static final char[] XREF_STREAM = new char[] { '/', 'X', 'R', 'e', 'f' };
     private static final char[] STARTXREF = new char[] { 's','t','a','r','t','x','r','e','f' };
 
+    private static final byte[] ENDSTREAM = new byte[] { E, N, D, S, T, R, E, A, M };
+
+    private static final byte[] ENDOBJ = new byte[] { E, N, D, O, B, J };
+
     private static final long MINIMUM_SEARCH_OFFSET = 6;
     
     private static final int X = 'x';
 
+    private static final int STRMBUFLEN = 2048;
+    private final byte[] strmBuf    = new byte[ STRMBUFLEN ];
+
+    protected final RandomAccessRead source;
+    
     /**
      * Only parse the PDF file minimally allowing access to basic information.
      */
@@ -148,14 +156,12 @@ public class COSParser extends BaseParser
     public static final String TMP_FILE_PREFIX = "tmpPDF";
     
     /**
-     * Constructor.
-     * 
-     * @param input inputStream of the pdf to be read
-     * @throws IOException if something went wrong
+     * Default constructor.
      */
-    public COSParser(InputStream input) throws IOException
+    public COSParser(RandomAccessRead source)
     {
-        super(input);
+        super(new RandomAccessSource(source));
+        this.source = source;
     }
 
     /**
@@ -190,7 +196,7 @@ public class COSParser extends BaseParser
      */
     protected COSDictionary parseXref(long startXRefOffset) throws IOException
     {
-        pdfSource.seek(startXRefOffset);
+        source.seek(startXRefOffset);
         long startXrefOffset = Math.max(0, parseStartXref());
         // check the startxref offset
         long fixedOffset = checkXRefOffset(startXrefOffset);
@@ -201,25 +207,27 @@ public class COSParser extends BaseParser
         document.setStartXref(startXrefOffset);
         long prev = startXrefOffset;
         // ---- parse whole chain of xref tables/object streams using PREV reference
-        while (prev > 0)
+        long lastPrev = -1;
+        while (prev > 0 && prev != lastPrev)
         {
+            lastPrev = prev;
             // seek to xref table
-            pdfSource.seek(prev);
+            source.seek(prev);
 
             // skip white spaces
             skipSpaces();
             // -- parse xref
-            if (pdfSource.peek() == X)
+            if (source.peek() == X)
             {
                 // xref table and trailer
                 // use existing parser to parse xref table
                 parseXrefTable(prev);
                 // parse the last trailer.
-                trailerOffset = pdfSource.getOffset();
+                trailerOffset = source.getPosition();
                 // PDFBOX-1739 skip extra xref entries in RegisSTAR documents
-                while (isLenient && pdfSource.peek() != 't')
+                while (isLenient && source.peek() != 't')
                 {
-                    if (pdfSource.getOffset() == trailerOffset)
+                    if (source.getPosition() == trailerOffset)
                     {
                         // warn only the first time
                         LOG.warn("Expected trailer object at position " + trailerOffset
@@ -230,7 +238,7 @@ public class COSParser extends BaseParser
                 if (!parseTrailer())
                 {
                     throw new IOException("Expected trailer object at position: "
-                            + pdfSource.getOffset());
+                            + source.getPosition());
                 }
                 COSDictionary trailer = xrefTrailerResolver.getCurrentTrailer();
                 // check for a XRef stream, it may contain some object ids of compressed objects 
@@ -246,7 +254,7 @@ public class COSParser extends BaseParser
                     }
                     if (streamOffset > 0)
                     {
-                        pdfSource.seek(streamOffset);
+                        source.seek(streamOffset);
                         skipSpaces();
                         parseXrefObjStream(prev, false);
                     }
@@ -291,6 +299,11 @@ public class COSParser extends BaseParser
                 }
             }
         }
+        if (prev == lastPrev)
+        {
+            //TODO better idea needed? PDFBOX-3446
+            throw new IOException("/Prev loop at offset " + prev);
+        }
         // ---- build valid xrefs out of the xref chain
         xrefTrailerResolver.setStartxref(startXrefOffset);
         COSDictionary trailer = xrefTrailerResolver.getTrailer();
@@ -317,7 +330,7 @@ public class COSParser extends BaseParser
 
         COSDictionary dict = parseCOSDictionary();
         COSStream xrefStream = parseCOSStream(dict);
-        parseXrefStream(xrefStream, (int) objByteOffset, isStandalone);
+        parseXrefStream(xrefStream, objByteOffset, isStandalone);
         xrefStream.close();
 
         return dict.getLong(COSName.PREV);
@@ -341,12 +354,12 @@ public class COSParser extends BaseParser
             final int trailByteCount = (fileLen < readTrailBytes) ? (int) fileLen : readTrailBytes;
             buf = new byte[trailByteCount];
             skipBytes = fileLen - trailByteCount;
-            pdfSource.seek(skipBytes);
+            source.seek(skipBytes);
             int off = 0;
             int readBytes;
             while (off < trailByteCount)
             {
-                readBytes = pdfSource.read(buf, off, trailByteCount - off);
+                readBytes = source.read(buf, off, trailByteCount - off);
                 // in order to not get stuck in a loop we check readBytes (this should never happen)
                 if (readBytes < 1)
                 {
@@ -359,7 +372,7 @@ public class COSParser extends BaseParser
         }
         finally
         {
-            pdfSource.seek(0);
+            source.seek(0);
         }
         // find last '%%EOF'
         int bufOff = lastIndexOf(EOF_MARKER, buf, buf.length);
@@ -502,12 +515,12 @@ public class COSParser extends BaseParser
     }
 
     /**
-     * Will parse every object necessary to load a single page from the pdf document. We try our best to order objects
-     * according to offset in file before reading to minimize seek operations.
-     * 
+     * Will parse every object necessary to load a single page from the pdf document. We try our
+     * best to order objects according to offset in file before reading to minimize seek operations.
+     *
      * @param dict the COSObject from the parent pages.
      * @param excludeObjects dictionary object reference entries with these names will not be parsed
-     * 
+     *
      * @throws IOException if something went wrong
      */
     protected void parseDictObjects(COSDictionary dict, COSName... excludeObjects) throws IOException
@@ -537,10 +550,9 @@ public class COSParser extends BaseParser
                 }
                 else if (baseObj instanceof COSArray)
                 {
-                    final Iterator<COSBase> arrIter = ((COSArray) baseObj).iterator();
-                    while (arrIter.hasNext())
+                    for (COSBase cosBase : ((COSArray) baseObj))
                     {
-                        addNewToList(toBeParsedList, arrIter.next(), addedObjects);
+                        addNewToList(toBeParsedList, cosBase, addedObjects);
                     }
                 }
                 else if (baseObj instanceof COSObject)
@@ -593,7 +605,7 @@ public class COSParser extends BaseParser
                 }
             }
 
-            // ---- read first COSObject with smallest offset;
+            // ---- read first COSObject with smallest offset
             // resulting object will be added to toBeParsedList
             if (objToBeParsed.isEmpty())
             {
@@ -603,11 +615,12 @@ public class COSParser extends BaseParser
             for (COSObject obj : objToBeParsed.remove(objToBeParsed.firstKey()))
             {
                 COSBase parsedObj = parseObjectDynamically(obj, false);
-
-                obj.setObject(parsedObj);
-                addNewToList(toBeParsedList, parsedObj, addedObjects);
-
-                parsedObjects.add(getObjectId(obj));
+                if (parsedObj != null)
+                {
+                    obj.setObject(parsedObj);
+                    addNewToList(toBeParsedList, parsedObj, addedObjects);
+                    parsedObjects.add(getObjectId(obj));
+                }
             }
         }
     }
@@ -680,6 +693,28 @@ public class COSParser extends BaseParser
                         + objKey.getNumber() + ":" + objKey.getGeneration());
             }
 
+            // maybe something is wrong with the xref table -> perform brute force search for all objects
+            if (offsetOrObjstmObNr == null && isLenient && bfSearchCOSObjectKeyOffsets == null)
+            {
+                bfSearchForObjects();
+                if (bfSearchCOSObjectKeyOffsets != null && !bfSearchCOSObjectKeyOffsets.isEmpty())
+                {
+                    LOG.debug("Add all new read objects from brute force search to the xref table");
+                    Map<COSObjectKey, Long> xrefOffset = xrefTrailerResolver.getXrefTable();
+                    final Set<Map.Entry<COSObjectKey, Long>> entries = bfSearchCOSObjectKeyOffsets.entrySet();
+                    for (Entry<COSObjectKey, Long> entry : entries)
+                    {
+                        COSObjectKey key = entry.getKey();
+                        // add all missing objects to the xref table
+                        if (!xrefOffset.containsKey(key))
+                        {
+                            xrefOffset.put(key, entry.getValue());
+                        }
+                    }
+                    offsetOrObjstmObNr = xrefOffset.get(objKey);
+                }
+            }
+
             if (offsetOrObjstmObNr == null)
             {
                 // not defined object -> NULL object (Spec. 1.7, chap. 3.2.9)
@@ -688,180 +723,181 @@ public class COSParser extends BaseParser
             else if (offsetOrObjstmObNr > 0)
             {
                 // offset of indirect object in file
-                // ---- go to object start
-                pdfSource.seek(offsetOrObjstmObNr);
-
-                // ---- we must have an indirect object
-                final long readObjNr = readObjectNumber();
-                final int readObjGen = readGenerationNumber();
-                readExpectedString(OBJ_MARKER, true);
-
-                // ---- consistency check
-                if ((readObjNr != objKey.getNumber()) || (readObjGen != objKey.getGeneration()))
-                {
-                    throw new IOException("XREF for " + objKey.getNumber() + ":"
-                            + objKey.getGeneration() + " points to wrong object: " + readObjNr
-                            + ":" + readObjGen);
-                }
-
-                skipSpaces();
-                COSBase pb = parseDirObject();
-                String endObjectKey = readString();
-
-                if (endObjectKey.equals(STREAM_STRING))
-                {
-                    pdfSource.unread(endObjectKey.getBytes(ISO_8859_1));
-                    pdfSource.unread(' ');
-                    if (pb instanceof COSDictionary)
-                    {
-                        COSStream stream = parseCOSStream((COSDictionary) pb);
-
-                        if (securityHandler != null)
-                        {
-                            securityHandler.decryptStream(stream, objNr, objGenNr);
-                        }
-                        pb = stream;
-                    }
-                    else
-                    {
-                        // this is not legal
-                        // the combination of a dict and the stream/endstream
-                        // forms a complete stream object
-                        throw new IOException("Stream not preceded by dictionary (offset: "
-                                + offsetOrObjstmObNr + ").");
-                    }
-                    skipSpaces();
-                    endObjectKey = readLine();
-
-                    // we have case with a second 'endstream' before endobj
-                    if (!endObjectKey.startsWith(ENDOBJ_STRING) && endObjectKey.startsWith(ENDSTREAM_STRING))
-                    {
-                        endObjectKey = endObjectKey.substring(9).trim();
-                        if (endObjectKey.length() == 0)
-                        {
-                            // no other characters in extra endstream line
-                            // read next line
-                            endObjectKey = readLine();
-                        }
-                    }
-                }
-                else if (securityHandler != null)
-                {
-                    securityHandler.decrypt(pb, objNr, objGenNr);
-                }
-
-                pdfObject.setObject(pb);
-
-                if (!endObjectKey.startsWith(ENDOBJ_STRING))
-                {
-                    if (isLenient)
-                    {
-                        LOG.warn("Object (" + readObjNr + ":" + readObjGen + ") at offset "
-                                + offsetOrObjstmObNr + " does not end with 'endobj' but with '"
-                                + endObjectKey + "'");
-                    }
-                    else
-                    {
-                        throw new IOException("Object (" + readObjNr + ":" + readObjGen
-                                + ") at offset " + offsetOrObjstmObNr
-                                + " does not end with 'endobj' but with '" + endObjectKey + "'");
-                    }
-                }
+                parseFileObject(offsetOrObjstmObNr, objKey, pdfObject);
             }
             else
             {
-                // xref value is object nr of object stream containing object to
-                // be parsed;
-                // since our object was not found it means object stream was not
-                // parsed so far
-                final int objstmObjNr = (int) (-offsetOrObjstmObNr);
-                final COSBase objstmBaseObj = parseObjectDynamically(objstmObjNr, 0, true);
-                if (objstmBaseObj instanceof COSStream)
-                {
-                    // parse object stream
-                    PDFObjectStreamParser parser = new PDFObjectStreamParser((COSStream) objstmBaseObj, document);
-                    parser.parse();
-                    parser.close();
-                    // get set of object numbers referenced for this object
-                    // stream
-                    final Set<Long> refObjNrs = xrefTrailerResolver.getContainedObjectNumbers(objstmObjNr);
-
-                    // register all objects which are referenced to be contained
-                    // in object stream
-                    for (COSObject next : parser.getObjects())
-                    {
-                        COSObjectKey stmObjKey = new COSObjectKey(next);
-                        if (refObjNrs.contains(stmObjKey.getNumber()))
-                        {
-                            COSObject stmObj = document.getObjectFromPool(stmObjKey);
-                            stmObj.setObject(next.getObject());
-                        }
-                    }
-                }
+                // xref value is object nr of object stream containing object to be parsed
+                // since our object was not found it means object stream was not parsed so far
+                parseObjectStream((int) -offsetOrObjstmObNr);
             }
         }
         return pdfObject.getObject();
     }
-    
-    private boolean inGetLength = false;
 
+    private void parseFileObject(Long offsetOrObjstmObNr, final COSObjectKey objKey, final COSObject pdfObject) throws IOException
+    {
+        // ---- go to object start
+        source.seek(offsetOrObjstmObNr);
+
+        // ---- we must have an indirect object
+        final long readObjNr = readObjectNumber();
+        final int readObjGen = readGenerationNumber();
+        readExpectedString(OBJ_MARKER, true);
+
+        // ---- consistency check
+        if ((readObjNr != objKey.getNumber()) || (readObjGen != objKey.getGeneration()))
+        {
+            throw new IOException("XREF for " + objKey.getNumber() + ":"
+                    + objKey.getGeneration() + " points to wrong object: " + readObjNr
+                    + ":" + readObjGen + " at offset " + offsetOrObjstmObNr);
+        }
+
+        skipSpaces();
+        COSBase pb = parseDirObject();
+        String endObjectKey = readString();
+
+        if (endObjectKey.equals(STREAM_STRING))
+        {
+            source.rewind(endObjectKey.getBytes(ISO_8859_1).length);
+            if (pb instanceof COSDictionary)
+            {
+                COSStream stream = parseCOSStream((COSDictionary) pb);
+
+                if (securityHandler != null)
+                {
+                    securityHandler.decryptStream(stream, objKey.getNumber(), objKey.getGeneration());
+                }
+                pb = stream;
+            }
+            else
+            {
+                // this is not legal
+                // the combination of a dict and the stream/endstream
+                // forms a complete stream object
+                throw new IOException("Stream not preceded by dictionary (offset: "
+                        + offsetOrObjstmObNr + ").");
+            }
+            skipSpaces();
+            endObjectKey = readLine();
+
+            // we have case with a second 'endstream' before endobj
+            if (!endObjectKey.startsWith(ENDOBJ_STRING) && endObjectKey.startsWith(ENDSTREAM_STRING))
+            {
+                endObjectKey = endObjectKey.substring(9).trim();
+                if (endObjectKey.length() == 0)
+                {
+                    // no other characters in extra endstream line
+                    // read next line
+                    endObjectKey = readLine();
+                }
+            }
+        }
+        else if (securityHandler != null)
+        {
+            securityHandler.decrypt(pb, objKey.getNumber(), objKey.getGeneration());
+        }
+
+        pdfObject.setObject(pb);
+
+        if (!endObjectKey.startsWith(ENDOBJ_STRING))
+        {
+            if (isLenient)
+            {
+                LOG.warn("Object (" + readObjNr + ":" + readObjGen + ") at offset "
+                        + offsetOrObjstmObNr + " does not end with 'endobj' but with '"
+                        + endObjectKey + "'");
+            }
+            else
+            {
+                throw new IOException("Object (" + readObjNr + ":" + readObjGen
+                        + ") at offset " + offsetOrObjstmObNr
+                        + " does not end with 'endobj' but with '" + endObjectKey + "'");
+            }
+        }
+    }
+
+    private void parseObjectStream(int objstmObjNr) throws IOException
+    {
+        final COSBase objstmBaseObj = parseObjectDynamically(objstmObjNr, 0, true);
+        if (objstmBaseObj instanceof COSStream)
+        {
+            // parse object stream
+            PDFObjectStreamParser parser = new PDFObjectStreamParser((COSStream) objstmBaseObj, document);
+            try
+            {
+                parser.parse();
+            }
+            catch(IOException exception)
+            {
+                if (isLenient)
+                {
+                    LOG.debug("Stop reading object stream "+objstmObjNr+" due to an exception", exception);
+                    // the error is handled in parseDictObjects
+                    return;
+                }
+                else
+                {
+                    throw exception;
+                }
+            }
+            // register all objects which are referenced to be contained in object stream
+            for (COSObject next : parser.getObjects())
+            {
+                COSObjectKey stmObjKey = new COSObjectKey(next);
+                Long offset = xrefTrailerResolver.getXrefTable().get(stmObjKey); 
+                if (offset != null && offset == -objstmObjNr)
+                {
+                    COSObject stmObj = document.getObjectFromPool(stmObjKey);
+                    stmObj.setObject(next.getObject());
+                }
+            }
+        }
+    }
+    
     /** 
      * Returns length value referred to or defined in given object. 
      */
-    private COSNumber getLength(final COSBase lengthBaseObj) throws IOException
+    private COSNumber getLength(final COSBase lengthBaseObj, final COSName streamType) throws IOException
     {
         if (lengthBaseObj == null)
         {
             return null;
         }
-
-        if (inGetLength)
-        {
-            throw new IOException("Loop while reading length from " + lengthBaseObj);
-        }
-
         COSNumber retVal = null;
-
-        try
+        // maybe length was given directly
+        if (lengthBaseObj instanceof COSNumber)
         {
-            inGetLength = true;
-            // maybe length was given directly
-            if (lengthBaseObj instanceof COSNumber)
+            retVal = (COSNumber) lengthBaseObj;
+        }
+        // length in referenced object
+        else if (lengthBaseObj instanceof COSObject)
+        {
+            COSObject lengthObj = (COSObject) lengthBaseObj;
+            if (lengthObj.getObject() == null)
             {
-                retVal = (COSNumber) lengthBaseObj;
-            }
-            // length in referenced object
-            else if (lengthBaseObj instanceof COSObject)
-            {
-                COSObject lengthObj = (COSObject) lengthBaseObj;
+                // not read so far, keep current stream position
+                final long curFileOffset = source.getPosition();
+                boolean isObjectStream = COSName.OBJ_STM.equals(streamType);
+                parseObjectDynamically(lengthObj, isObjectStream);
+                // reset current stream position
+                source.seek(curFileOffset);
                 if (lengthObj.getObject() == null)
                 {
-                    // not read so far, keep current stream position
-                    final long curFileOffset = pdfSource.getOffset();
-                    parseObjectDynamically(lengthObj, true);
-                    // reset current stream position
-                    pdfSource.seek(curFileOffset);
-                    if (lengthObj.getObject() == null)
-                    {
-                        throw new IOException("Length object content was not read.");
-                    }
+                    throw new IOException("Length object content was not read.");
                 }
-                if (!(lengthObj.getObject() instanceof COSNumber))
-                {
-                    throw new IOException("Wrong type of referenced length object " + lengthObj
-                            + ": " + lengthObj.getObject().getClass().getSimpleName());
-                }
-                retVal = (COSNumber) lengthObj.getObject();
             }
-            else
+            if (!(lengthObj.getObject() instanceof COSNumber))
             {
-                throw new IOException("Wrong type of length object: "
-                        + lengthBaseObj.getClass().getSimpleName());
+                throw new IOException("Wrong type of referenced length object " + lengthObj
+                        + ": " + lengthObj.getObject().getClass().getSimpleName());
             }
+            retVal = (COSNumber) lengthObj.getObject();
         }
-        finally
+        else
         {
-            inGetLength = false;
+            throw new IOException("Wrong type of length object: "
+                    + lengthBaseObj.getClass().getSimpleName());
         }
         return retVal;
     }
@@ -870,163 +906,256 @@ public class COSParser extends BaseParser
     private final byte[] streamCopyBuf = new byte[STREAMCOPYBUFLEN];
 
     /**
-     * This will read a COSStream from the input stream using length attribute within dictionary. If length attribute is
-     * a indirect reference it is first resolved to get the stream length. This means we copy stream data without
-     * testing for 'endstream' or 'endobj' and thus it is no problem if these keywords occur within stream. We require
-     * 'endstream' to be found after stream data is read.
-     * 
+     * This will read a COSStream from the input stream using length attribute within dictionary. If
+     * length attribute is a indirect reference it is first resolved to get the stream length. This
+     * means we copy stream data without testing for 'endstream' or 'endobj' and thus it is no
+     * problem if these keywords occur within stream. We require 'endstream' to be found after
+     * stream data is read.
+     *
      * @param dic dictionary that goes with this stream.
-     * 
+     *
      * @return parsed pdf stream.
-     * 
-     * @throws IOException if an error occurred reading the stream, like problems with reading length attribute, stream
-     * does not end with 'endstream' after data read, stream too short etc.
+     *
+     * @throws IOException if an error occurred reading the stream, like problems with reading
+     * length attribute, stream does not end with 'endstream' after data read, stream too short etc.
      */
-    @Override
     protected COSStream parseCOSStream(COSDictionary dic) throws IOException
     {
-        final COSStream stream = createCOSStream(dic);
-        OutputStream out = null;
-        try
+        COSStream stream = document.createCOSStream(dic);
+       
+        // read 'stream'; this was already tested in parseObjectsDynamically()
+        readString(); 
+        
+        skipWhiteSpaces();
+
+        /*
+         * This needs to be dic.getItem because when we are parsing, the underlying object might still be null.
+         */
+        COSNumber streamLengthObj = getLength(dic.getItem(COSName.LENGTH), dic.getCOSName(COSName.TYPE));
+        if (streamLengthObj == null)
         {
-            // read 'stream'; this was already tested in parseObjectsDynamically()
-            readString(); 
-            // skip whitespaces before start of data
-            // PDF Ref 1.7, chap. 3.2.7:
-            // 'stream' should be followed by either a CRLF (0x0d 0x0a) or LF
-            // but nothing else.
-            int whitespace = pdfSource.read();
-            
-            // see brother_scan_cover.pdf, it adds whitespaces
-            // after the stream but before the start of the
-            // data, so just read those first
-            while (whitespace == 0x20)
+            if (isLenient)
             {
-                whitespace = pdfSource.read();
-            }
-
-            if (whitespace == 0x0D)
-            {
-                whitespace = pdfSource.read();
-                if (whitespace != 0x0A)
-                {
-                    // the spec says this is invalid but it happens in the
-                    // real world so we must support it
-                    pdfSource.unread(whitespace);
-                }
-            }
-            else if (whitespace != 0x0A)
-            {
-                // no whitespace after 'stream'; PDF ref. says 'should' so
-                // that is ok
-                pdfSource.unread(whitespace);
-            }
-
-            /*
-             * This needs to be dic.getItem because when we are parsing, the underlying object might still be null.
-             */
-            COSNumber streamLengthObj = getLength(dic.getItem(COSName.LENGTH));
-            if (streamLengthObj == null)
-            {
-                if (isLenient)
-                {
-                   LOG.warn("The stream doesn't provide any stream length, using fallback readUntilEnd, at offset "
-                        + pdfSource.getOffset());
-                }
-                else
-                {
-                    throw new IOException("Missing length for stream.");
-                }
-            }
-
-            boolean useReadUntilEnd = false;
-            // get output stream to copy data to
-            if (streamLengthObj != null && validateStreamLength(streamLengthObj.longValue()))
-            {
-                out = stream.createFilteredStream(streamLengthObj);
-                long remainBytes = streamLengthObj.longValue();
-                int bytesRead = 0;
-                while (remainBytes > 0)
-                {
-                    final int readBytes = pdfSource
-                            .read(streamCopyBuf,
-                                    0,
-                                    (remainBytes > STREAMCOPYBUFLEN) ? STREAMCOPYBUFLEN : (int) remainBytes);
-                    if (readBytes <= 0)
-                    {
-                        useReadUntilEnd = true;
-                        out.close();
-                        pdfSource.unread(bytesRead);
-                        break;
-                    }
-                    out.write(streamCopyBuf, 0, readBytes);
-                    remainBytes -= readBytes;
-                    bytesRead += readBytes;
-                }
+               LOG.warn("The stream doesn't provide any stream length, using fallback readUntilEnd, at offset "
+                    + source.getPosition());
             }
             else
             {
-                useReadUntilEnd = true;
-            }
-            if (useReadUntilEnd)
-            {
-                out = stream.createFilteredStream();
-                readUntilEndStream(new EndstreamOutputStream(out));
-            }
-            String endStream = readString();
-            if (endStream.equals("endobj") && isLenient)
-            {
-                LOG.warn("stream ends with 'endobj' instead of 'endstream' at offset "
-                        + pdfSource.getOffset());
-                // avoid follow-up warning about missing endobj
-                pdfSource.unread(ENDOBJ);
-            }
-            else if (endStream.length() > 9 && isLenient && endStream.substring(0,9).equals(ENDSTREAM_STRING))
-            {
-                LOG.warn("stream ends with '" + endStream + "' instead of 'endstream' at offset "
-                        + pdfSource.getOffset());
-                // unread the "extra" bytes
-                pdfSource.unread(endStream.substring(9).getBytes(ISO_8859_1));
-            }
-            else if (!endStream.equals(ENDSTREAM_STRING))
-            {
-                throw new IOException(
-                        "Error reading stream, expected='endstream' actual='"
-                        + endStream + "' at offset " + pdfSource.getOffset());
+                throw new IOException("Missing length for stream.");
             }
         }
-        finally
+
+        // get output stream to copy data to
+        if (streamLengthObj != null && validateStreamLength(streamLengthObj.longValue()))
         {
-            if (out != null)
+            OutputStream out = stream.createRawOutputStream();
+            try
+            {
+                readValidStream(out, streamLengthObj);
+            }
+            finally
             {
                 out.close();
+                // restore original (possibly incorrect) length
+                stream.setItem(COSName.LENGTH, streamLengthObj);
             }
         }
+        else
+        {
+            OutputStream out = stream.createRawOutputStream();
+            try
+            {
+                readUntilEndStream(new EndstreamOutputStream(out));
+            }
+            finally
+            {
+                out.close();
+                // restore original (possibly incorrect) length
+                if (streamLengthObj != null)
+                {
+                    stream.setItem(COSName.LENGTH, streamLengthObj);
+                }
+                else
+                {
+                    stream.removeItem(COSName.LENGTH);
+                }
+            }
+        }
+        String endStream = readString();
+        if (endStream.equals("endobj") && isLenient)
+        {
+            LOG.warn("stream ends with 'endobj' instead of 'endstream' at offset "
+                    + source.getPosition());
+            // avoid follow-up warning about missing endobj
+            source.rewind(ENDOBJ.length);
+        }
+        else if (endStream.length() > 9 && isLenient && endStream.substring(0,9).equals(ENDSTREAM_STRING))
+        {
+            LOG.warn("stream ends with '" + endStream + "' instead of 'endstream' at offset "
+                    + source.getPosition());
+            // unread the "extra" bytes
+            source.rewind(endStream.substring(9).getBytes(ISO_8859_1).length);
+        }
+        else if (!endStream.equals(ENDSTREAM_STRING))
+        {
+            throw new IOException(
+                    "Error reading stream, expected='endstream' actual='"
+                    + endStream + "' at offset " + source.getPosition());
+        }
+
         return stream;
+    }
+
+    /**
+     * This method will read through the current stream object until
+     * we find the keyword "endstream" meaning we're at the end of this
+     * object. Some pdf files, however, forget to write some endstream tags
+     * and just close off objects with an "endobj" tag so we have to handle
+     * this case as well.
+     * 
+     * This method is optimized using buffered IO and reduced number of
+     * byte compare operations.
+     * 
+     * @param out  stream we write out to.
+     * 
+     * @throws IOException if something went wrong
+     */
+    private void readUntilEndStream( final OutputStream out ) throws IOException
+    {
+        int bufSize;
+        int charMatchCount = 0;
+        byte[] keyw = ENDSTREAM;
+        
+        // last character position of shortest keyword ('endobj')
+        final int quickTestOffset = 5;
+        
+        // read next chunk into buffer; already matched chars are added to beginning of buffer
+        while ( ( bufSize = source.read( strmBuf, charMatchCount, STRMBUFLEN - charMatchCount ) ) > 0 ) 
+        {
+            bufSize += charMatchCount;
+            
+            int bIdx = charMatchCount;
+            int quickTestIdx;
+        
+            // iterate over buffer, trying to find keyword match
+            for ( int maxQuicktestIdx = bufSize - quickTestOffset; bIdx < bufSize; bIdx++ ) 
+            {
+                // reduce compare operations by first test last character we would have to
+                // match if current one matches; if it is not a character from keywords
+                // we can move behind the test character; this shortcut is inspired by the 
+                // Boyer-Moore string search algorithm and can reduce parsing time by approx. 20%
+                quickTestIdx = bIdx + quickTestOffset;
+                if (charMatchCount == 0 && quickTestIdx < maxQuicktestIdx)
+                {                    
+                    final byte ch = strmBuf[quickTestIdx];
+                    if ( ( ch > 't' ) || ( ch < 'a' ) ) 
+                    {
+                        // last character we would have to match if current character would match
+                        // is not a character from keywords -> jump behind and start over
+                        bIdx = quickTestIdx;
+                        continue;
+                    }
+                }
+                
+                // could be negative - but we only compare to ASCII
+                final byte ch = strmBuf[bIdx];
+            
+                if ( ch == keyw[ charMatchCount ] ) 
+                {
+                    if ( ++charMatchCount == keyw.length ) 
+                    {
+                        // match found
+                        bIdx++;
+                        break;
+                    }
+                } 
+                else 
+                {
+                    if ( ( charMatchCount == 3 ) && ( ch == ENDOBJ[ charMatchCount ] ) ) 
+                    {
+                        // maybe ENDSTREAM is missing but we could have ENDOBJ
+                        keyw = ENDOBJ;
+                        charMatchCount++;
+                    } 
+                    else 
+                    {
+                        // no match; incrementing match start by 1 would be dumb since we already know 
+                        // matched chars depending on current char read we may already have beginning 
+                        // of a new match: 'e': first char matched; 'n': if we are at match position 
+                        // idx 7 we already read 'e' thus 2 chars matched for each other char we have 
+                        // to start matching first keyword char beginning with next read position
+                        charMatchCount = ( ch == E ) ? 1 : ( ( ch == N ) && ( charMatchCount == 7 ) ) ? 2 : 0;
+                        // search again for 'endstream'
+                        keyw = ENDSTREAM;
+                    }
+                } 
+            }
+            
+            int contentBytes = Math.max( 0, bIdx - charMatchCount );
+            
+            // write buffer content until first matched char to output stream
+            if ( contentBytes > 0 )
+            {
+                out.write( strmBuf, 0, contentBytes );
+            }
+            if ( charMatchCount == keyw.length ) 
+            {
+                // keyword matched; unread matched keyword (endstream/endobj) and following buffered content
+                source.rewind( bufSize - contentBytes );
+                break;
+            } 
+            else 
+            {
+                // copy matched chars at start of buffer
+                System.arraycopy( keyw, 0, strmBuf, 0, charMatchCount );
+            }            
+        }
+        // this writes a lonely CR or drops trailing CR LF and LF
+        out.flush();
+    }
+
+    private void readValidStream(OutputStream out, COSNumber streamLengthObj) throws IOException
+    {
+        long remainBytes = streamLengthObj.longValue();
+        while (remainBytes > 0)
+        {
+            final int chunk = (remainBytes > STREAMCOPYBUFLEN) ? STREAMCOPYBUFLEN : (int) remainBytes;
+            final int readBytes = source.read(streamCopyBuf, 0, chunk);
+            if (readBytes <= 0)
+            {
+                // shouldn't happen, the stream length has already been validated
+                throw new IOException("read error at offset " + source.getPosition()
+                        + ": expected " + chunk + " bytes, but read() returns " + readBytes);
+            }
+            out.write(streamCopyBuf, 0, readBytes);
+            remainBytes -= readBytes;
+        }
     }
 
     private boolean validateStreamLength(long streamLength) throws IOException
     {
         boolean streamLengthIsValid = true;
-        long originOffset = pdfSource.getOffset();
+        long originOffset = source.getPosition();
         long expectedEndOfStream = originOffset + streamLength;
         if (expectedEndOfStream > fileLen)
         {
             streamLengthIsValid = false;
-            LOG.error("The end of the stream is out of range, using workaround to read the stream, " +
-                      "found " + originOffset + " but expected " + expectedEndOfStream);
+            LOG.warn("The end of the stream is out of range, using workaround to read the stream, "
+                    + "stream start position: " + originOffset + ", length: " + streamLength
+                    + ", expected end position: " + expectedEndOfStream);
         }
         else
         {
-            pdfSource.seek(expectedEndOfStream);
+            source.seek(expectedEndOfStream);
             skipSpaces();
             if (!isString(ENDSTREAM))
             {
                 streamLengthIsValid = false;
-                LOG.error("The end of the stream doesn't point to the correct offset, using workaround to read the stream, " +
-                          "found " + originOffset + " but expected " + expectedEndOfStream);
+                LOG.warn("The end of the stream doesn't point to the correct offset, using workaround to read the stream, "
+                        + "stream start position: " + originOffset + ", length: " + streamLength
+                        + ", expected end position: " + expectedEndOfStream);
             }
-            pdfSource.seek(originOffset);
+            source.seek(originOffset);
         }
         return streamLengthIsValid;
     }
@@ -1045,8 +1174,8 @@ public class COSParser extends BaseParser
         {
             return startXRefOffset;
         }
-        pdfSource.seek(startXRefOffset);
-        if (pdfSource.peek() == X && isString(XREF_TABLE))
+        source.seek(startXRefOffset);
+        if (source.peek() == X && isString(XREF_TABLE))
         {
             return startXRefOffset;
         }
@@ -1078,14 +1207,13 @@ public class COSParser extends BaseParser
             return startXRefOffset;
         }
         // seek to offset-1 
-        pdfSource.seek(startXRefOffset-1);
-        int nextValue = pdfSource.read();
-        // the first character has to be a whitespace
+        source.seek(startXRefOffset-1);
+        int nextValue = source.read();
+        // the first character has to be a whitespace, and then a digit
         if (isWhitespace(nextValue))
         {
-            nextValue = pdfSource.peek();
-            // is the next character a digit?
-            if (nextValue > 47 && nextValue < 58)
+            skipSpaces();
+            if (isDigit())
             {
                 try
                 {
@@ -1093,14 +1221,19 @@ public class COSParser extends BaseParser
                     readObjectNumber();
                     readGenerationNumber();
                     readExpectedString(OBJ_MARKER, true);
-                    pdfSource.seek(startXRefOffset);
-                    return startXRefOffset;
+                    // check the dictionary to avoid false positives
+                    COSDictionary dict = parseCOSDictionary();
+                    source.seek(startXRefOffset);
+                    if (dict != null && "XRef".equals(dict.getNameAsString(COSName.TYPE)))
+                    {
+                        return startXRefOffset;
+                    }
                 }
                 catch (IOException exception)
                 {
-                    // there wasn't an object of a xref stream
+                // there wasn't an object of a xref stream
                     // try to repair the offset
-                    pdfSource.seek(startXRefOffset);
+                    source.seek(startXRefOffset);
                 }
             }
         }
@@ -1131,7 +1264,7 @@ public class COSParser extends BaseParser
             LOG.debug("Fixed reference for xref table/stream " + objectOffset + " -> " + newOffset);
             return newOffset;
         }
-        LOG.error("Can't find the object axref table/stream at offset " + objectOffset);
+        LOG.error("Can't find the object xref table/stream at offset " + objectOffset);
         return 0;
     }
 
@@ -1170,6 +1303,34 @@ public class COSParser extends BaseParser
                 bfSearchForObjects();
                 if (bfSearchCOSObjectKeyOffsets != null && !bfSearchCOSObjectKeyOffsets.isEmpty())
                 {
+                    List<COSObjectKey> objStreams = new ArrayList<COSObjectKey>();
+                    // find all object streams
+                    for (COSObjectKey key : xrefOffset.keySet())
+                    {
+                        Long offset = xrefOffset.get(key);
+                        if (offset != null && offset < 0 )
+                        {
+                            COSObjectKey objStream = new COSObjectKey(-offset, 0);
+                            if (!objStreams.contains(objStream))
+                            {
+                                objStreams.add(new COSObjectKey(-offset, 0));
+                            }
+                        }
+                    }
+                    // remove all found object streams
+                    for (COSObjectKey key : bfSearchCOSObjectKeyOffsets.keySet())
+                    {
+                        objStreams.remove(key);
+                    }
+                    // remove all objects which are part of an object stream which wasn't found
+                    for (COSObjectKey key : objStreams)
+                    {
+                        Set<Long> objects = xrefTrailerResolver.getContainedObjectNumbers((int)(key.getNumber()));
+                        for (Long objNr :objects)
+                        {
+                            xrefOffset.remove(new COSObjectKey(objNr, 0));
+                        }
+                    }
                     LOG.debug("Replaced read xref table with the results of a brute force search");
                     xrefOffset.putAll(bfSearchCOSObjectKeyOffsets);
                 }
@@ -1194,15 +1355,15 @@ public class COSParser extends BaseParser
         }
         long objectNr = objectKey.getNumber();
         int objectGen = objectKey.getGeneration();
-        long originOffset = pdfSource.getOffset();
-        pdfSource.seek(offset);
+        long originOffset = source.getPosition();
+        source.seek(offset);
         String objectString = createObjectString(objectNr, objectGen);
         try 
         {
             if (isString(objectString.getBytes(ISO_8859_1)))
             {
                 // everything is ok, return origin object key
-                pdfSource.seek(originOffset);
+                source.seek(originOffset);
                 return true;
             }
         }
@@ -1212,7 +1373,7 @@ public class COSParser extends BaseParser
         }
         finally 
         {
-            pdfSource.seek(originOffset);
+            source.seek(originOffset);
         }
         // no valid object number found
         return false;
@@ -1239,40 +1400,40 @@ public class COSParser extends BaseParser
         if (bfSearchCOSObjectKeyOffsets == null)
         {
             bfSearchCOSObjectKeyOffsets = new HashMap<COSObjectKey, Long>();
-            long originOffset = pdfSource.getOffset();
+            long originOffset = source.getPosition();
             long currentOffset = MINIMUM_SEARCH_OFFSET;
             String objString = " obj";
             char[] string = objString.toCharArray();
             do
             {
-                pdfSource.seek(currentOffset);
+                source.seek(currentOffset);
                 if (isString(string))
                 {
                     long tempOffset = currentOffset - 1;
-                    pdfSource.seek(tempOffset);
-                    int genID = pdfSource.peek();
+                    source.seek(tempOffset);
+                    int genID = source.peek();
                     // is the next char a digit?
-                    if (genID > 47 && genID < 58)
+                    if (isDigit(genID))
                     {
                         genID -= 48;
                         tempOffset--;
-                        pdfSource.seek(tempOffset);
+                        source.seek(tempOffset);
                         if (isSpace())
                         {
                             while (tempOffset > MINIMUM_SEARCH_OFFSET && isSpace())
                             {
-                                pdfSource.seek(--tempOffset);
+                                source.seek(--tempOffset);
                             }
                             int length = 0;
                             while (tempOffset > MINIMUM_SEARCH_OFFSET && isDigit())
                             {
-                                pdfSource.seek(--tempOffset);
+                                source.seek(--tempOffset);
                                 length++;
                             }
                             if (length > 0)
                             {
-                                pdfSource.read();
-                                byte[] objIDBytes = pdfSource.readFully(length);
+                                source.read();
+                                byte[] objIDBytes = source.readFully(length);
                                 String objIdString = new String(objIDBytes, 0,
                                         objIDBytes.length, ISO_8859_1);
                                 Long objectID;
@@ -1294,9 +1455,9 @@ public class COSParser extends BaseParser
                 }
                 currentOffset++;
             }
-            while (!pdfSource.isEOF());
+            while (!source.isEOF());
             // reestablish origin position
-            pdfSource.seek(originOffset);
+            source.seek(originOffset);
         }
     }
 
@@ -1334,12 +1495,12 @@ public class COSParser extends BaseParser
             long differenceStream = xrefOffset - newOffsetStream;
             if (Math.abs(differenceTable) > Math.abs(differenceStream))
             {
-                newOffset = differenceStream;
+                newOffset = newOffsetStream;
                 bfSearchXRefStreamsOffsets.remove(newOffsetStream);
             }
             else
             {
-                newOffset = differenceTable;
+                newOffset = newOffsetTable;
                 bfSearchXRefTablesOffsets.remove(newOffsetTable);
             }
         }
@@ -1391,25 +1552,25 @@ public class COSParser extends BaseParser
         {
             // a pdf may contain more than one xref entry
             bfSearchXRefTablesOffsets = new Vector<Long>();
-            long originOffset = pdfSource.getOffset();
-            pdfSource.seek(MINIMUM_SEARCH_OFFSET);
+            long originOffset = source.getPosition();
+            source.seek(MINIMUM_SEARCH_OFFSET);
             // search for xref tables
-            while (!pdfSource.isEOF())
+            while (!source.isEOF())
             {
                 if (isString(XREF_TABLE))
                 {
-                    long newOffset = pdfSource.getOffset();
-                    pdfSource.seek(newOffset - 1);
+                    long newOffset = source.getPosition();
+                    source.seek(newOffset - 1);
                     // ensure that we don't read "startxref" instead of "xref"
                     if (isWhitespace())
                     {
                         bfSearchXRefTablesOffsets.add(newOffset);
                     }
-                    pdfSource.seek(newOffset + 4);
+                    source.seek(newOffset + 4);
                 }
-                pdfSource.read();
+                source.read();
             }
-            pdfSource.seek(originOffset);
+            source.seek(originOffset);
         }
     }
 
@@ -1424,51 +1585,51 @@ public class COSParser extends BaseParser
         {
             // a pdf may contain more than one /XRef entry
             bfSearchXRefStreamsOffsets = new Vector<Long>();
-            long originOffset = pdfSource.getOffset();
-            pdfSource.seek(MINIMUM_SEARCH_OFFSET);
+            long originOffset = source.getPosition();
+            source.seek(MINIMUM_SEARCH_OFFSET);
             // search for XRef streams
             String objString = " obj";
             char[] string = objString.toCharArray();
-            while (!pdfSource.isEOF())
+            while (!source.isEOF())
             {
                 if (isString(XREF_STREAM))
                 {
                     // search backwards for the beginning of the stream
                     long newOffset = -1;
-                    long xrefOffset = pdfSource.getOffset();
+                    long xrefOffset = source.getPosition();
                     boolean objFound = false;
                     for (int i = 1; i < 30 && !objFound; i++)
                     {
                         long currentOffset = xrefOffset - (i * 10);
                         if (currentOffset > 0)
                         {
-                            pdfSource.seek(currentOffset);
+                            source.seek(currentOffset);
                             for (int j = 0; j < 10; j++)
                             {
                                 if (isString(string))
                                 {
                                     long tempOffset = currentOffset - 1;
-                                    pdfSource.seek(tempOffset);
-                                    int genID = pdfSource.peek();
+                                    source.seek(tempOffset);
+                                    int genID = source.peek();
                                     // is the next char a digit?
                                     if (isDigit(genID))
                                     {
                                         genID -= 48;
                                         tempOffset--;
-                                        pdfSource.seek(tempOffset);
+                                        source.seek(tempOffset);
                                         if (isSpace())
                                         {
                                             int length = 0;
-                                            pdfSource.seek(--tempOffset);
+                                            source.seek(--tempOffset);
                                             while (tempOffset > MINIMUM_SEARCH_OFFSET && isDigit())
                                             {
-                                                pdfSource.seek(--tempOffset);
+                                                source.seek(--tempOffset);
                                                 length++;
                                             }
                                             if (length > 0)
                                             {
-                                                pdfSource.read();
-                                                newOffset = pdfSource.getOffset();
+                                                source.read();
+                                                newOffset = source.getPosition();
                                             }
                                         }
                                     }
@@ -1480,7 +1641,7 @@ public class COSParser extends BaseParser
                                 else
                                 {
                                     currentOffset++;
-                                    pdfSource.read();
+                                    source.read();
                                 }
                             }
                         }
@@ -1489,11 +1650,11 @@ public class COSParser extends BaseParser
                     {
                         bfSearchXRefStreamsOffsets.add(newOffset);
                     }
-                    pdfSource.seek(xrefOffset + 5);
+                    source.seek(xrefOffset + 5);
                 }
-                pdfSource.read();
+                source.read();
             }
-            pdfSource.seek(originOffset);
+            source.seek(originOffset);
         }
     }
     
@@ -1511,18 +1672,18 @@ public class COSParser extends BaseParser
         if (bfSearchCOSObjectKeyOffsets != null)
         {
             xrefTrailerResolver.nextXrefObj( 0, XRefType.TABLE );
-            for (COSObjectKey objectKey : bfSearchCOSObjectKeyOffsets.keySet())
+            for (Entry<COSObjectKey, Long> entry : bfSearchCOSObjectKeyOffsets.entrySet())
             {
-                xrefTrailerResolver.setXRef(objectKey, bfSearchCOSObjectKeyOffsets.get(objectKey));
+                xrefTrailerResolver.setXRef(entry.getKey(), entry.getValue());
             }
             xrefTrailerResolver.setStartxref(0);
             trailer = xrefTrailerResolver.getTrailer();
             getDocument().setTrailer(trailer);
             // search for the different parts of the trailer dictionary 
-            for(COSObjectKey key : bfSearchCOSObjectKeyOffsets.keySet())
+            for(Entry<COSObjectKey, Long> entry : bfSearchCOSObjectKeyOffsets.entrySet())
             {
-                Long offset = bfSearchCOSObjectKeyOffsets.get(key);
-                pdfSource.seek(offset);
+                Long offset = entry.getValue();
+                source.seek(offset);
                 readObjectNumber();
                 readGenerationNumber();
                 readExpectedString(OBJ_MARKER, true);
@@ -1534,25 +1695,26 @@ public class COSParser extends BaseParser
                         // document catalog
                         if (COSName.CATALOG.equals(dictionary.getCOSName(COSName.TYPE)))
                         {
-                            trailer.setItem(COSName.ROOT, document.getObjectFromPool(key));
+                            trailer.setItem(COSName.ROOT, document.getObjectFromPool(entry.getKey()));
                         }
                         // info dictionary
-                        else if (dictionary.containsKey(COSName.TITLE)
+                        else if (dictionary.containsKey(COSName.MOD_DATE) && 
+                                (dictionary.containsKey(COSName.TITLE)
                                 || dictionary.containsKey(COSName.AUTHOR)
                                 || dictionary.containsKey(COSName.SUBJECT)
                                 || dictionary.containsKey(COSName.KEYWORDS)
                                 || dictionary.containsKey(COSName.CREATOR)
                                 || dictionary.containsKey(COSName.PRODUCER)
-                                || dictionary.containsKey(COSName.CREATION_DATE))
+                                || dictionary.containsKey(COSName.CREATION_DATE)))
                         {
-                            trailer.setItem(COSName.INFO, document.getObjectFromPool(key));
+                            trailer.setItem(COSName.INFO, document.getObjectFromPool(entry.getKey()));
                         }
                         // TODO encryption dictionary
                     }
                 }
                 catch(IOException exception)
                 {
-                    LOG.debug("Skipped object "+key+", either it's corrupt or not a dictionary");
+                    LOG.debug("Skipped object " + entry.getKey() + ", either it's corrupt or not a dictionary");
                 }
             }
         }
@@ -1578,6 +1740,61 @@ public class COSParser extends BaseParser
         }
         return startXref;
     }
+    
+    /**
+     * Checks if the given string can be found at the current offset.
+     * 
+     * @param string the bytes of the string to look for
+     * @return true if the bytes are in place, false if not
+     * @throws IOException if something went wrong
+     */
+    private boolean isString(byte[] string) throws IOException
+    {
+        boolean bytesMatching = false;
+        if (source.peek() == string[0])
+        {
+            int length = string.length;
+            byte[] bytesRead = new byte[length];
+            int numberOfBytes = source.read(bytesRead, 0, length);
+            while (numberOfBytes < length)
+            {
+                int readMore = source.read(bytesRead, numberOfBytes, length - numberOfBytes);
+                if (readMore < 0)
+                {
+                    break;
+                }
+                numberOfBytes += readMore;
+            }
+            if (Arrays.equals(string, bytesRead))
+            {
+                bytesMatching = true;
+            }
+            source.rewind(numberOfBytes);
+        }
+        return bytesMatching;
+    }
+
+    /**
+     * Checks if the given string can be found at the current offset.
+     * 
+     * @param string the bytes of the string to look for
+     * @return true if the bytes are in place, false if not
+     * @throws IOException if something went wrong
+     */
+    private boolean isString(char[] string) throws IOException
+    {
+        boolean bytesMatching = true;
+        long originOffset = source.getPosition();
+        for (char c : string)
+        {
+            if (source.read() != c)
+            {
+                bytesMatching = false;
+            }
+        }
+        source.seek(originOffset);
+        return bytesMatching;
+    }
 
     /**
      * This will parse the trailer from the stream and add it to the state.
@@ -1587,12 +1804,12 @@ public class COSParser extends BaseParser
      */
     private boolean parseTrailer() throws IOException
     {
-        if(pdfSource.peek() != 't')
+        if(source.peek() != 't')
         {
             return false;
         }
         //read "trailer"
-        long currentOffset = pdfSource.getOffset();
+        long currentOffset = source.getPosition();
         String nextLine = readLine();
         if( !nextLine.trim().equals( "trailer" ) )
         {
@@ -1605,7 +1822,7 @@ public class COSParser extends BaseParser
                 // we can't just unread a portion of the read data as we don't know if the EOL consist of 1 or 2 bytes
                 int len = "trailer".length();
                 // jump back right after "trailer"
-                pdfSource.seek(currentOffset + len);
+                source.seek(currentOffset + len);
             }
             else
             {
@@ -1669,7 +1886,7 @@ public class COSParser extends BaseParser
         // nothing found
         if (!header.contains(headerMarker))
         {
-            pdfSource.seek(0);
+            source.seek(0);
             return false;
         }
     
@@ -1697,7 +1914,7 @@ public class COSParser extends BaseParser
             {
                 String headerGarbage = header.substring(headerMarker.length() + 3, header.length()) + "\n";
                 header = header.substring(0, headerMarker.length() + 3);
-                pdfSource.unread(headerGarbage.getBytes(ISO_8859_1));
+                source.rewind(headerGarbage.getBytes(ISO_8859_1).length);
             }
         }
         float headerVersion = -1;
@@ -1719,7 +1936,7 @@ public class COSParser extends BaseParser
         }
         document.setVersion(headerVersion);
         // rewind
-        pdfSource.seek(0);
+        source.seek(0);
         return true;
     }
 
@@ -1732,7 +1949,7 @@ public class COSParser extends BaseParser
      */
     protected boolean parseXrefTable(long startByteOffset) throws IOException
     {
-        if(pdfSource.peek() != 'x')
+        if(source.peek() != 'x')
         {
             return false;
         }
@@ -1745,7 +1962,7 @@ public class COSParser extends BaseParser
         // check for trailer after xref
         String str = readString();
         byte[] b = str.getBytes(ISO_8859_1);
-        pdfSource.unread(b, 0, b.length);
+        source.rewind(b.length);
         
         // signal start of new XRef
         xrefTrailerResolver.nextXrefObj( startByteOffset, XRefType.TABLE );
@@ -1768,11 +1985,11 @@ public class COSParser extends BaseParser
             skipSpaces();
             for(int i = 0; i < count; i++)
             {
-                if(pdfSource.isEOF() || isEndOfName((char)pdfSource.peek()))
+                if(source.isEOF() || isEndOfName((char)source.peek()))
                 {
                     break;
                 }
-                if(pdfSource.peek() == 't')
+                if(source.peek() == 't')
                 {
                     break;
                 }
@@ -1790,7 +2007,7 @@ public class COSParser extends BaseParser
                 {
                     try
                     {
-                        int currOffset = Integer.parseInt(splitString[0]);
+                        long currOffset = Long.parseLong(splitString[0]);
                         int currGenID = Integer.parseInt(splitString[1]);
                         COSObjectKey objKey = new COSObjectKey(currObjID, currGenID);
                         xrefTrailerResolver.setXRef(objKey, currOffset);
@@ -1835,7 +2052,6 @@ public class COSParser extends BaseParser
         }        
         PDFXrefStreamParser parser = new PDFXrefStreamParser( stream, document, xrefTrailerResolver );
         parser.parse();
-        parser.close();
     }
 
     /**
@@ -1857,28 +2073,32 @@ public class COSParser extends BaseParser
     }
 
     /**
-     * Create a temporary file with the input stream. If the creation succeed, the {@linkplain #isTmpPDFFile} is set to
-     * true. This Temporary file will be deleted at end of the parse method
+     * Parse the values of the trailer dictionary and return the root object.
      *
-     * @param input
-     * @return the temporary file
-     * @throws IOException If something went wrong.
+     * @param trailer The trailer dictionary.
+     * @return The parsed root object.
+     * @throws IOException If an IO error occurs or if the root object is
+     * missing in the trailer dictionary.
      */
-    File createTmpFile(InputStream input) throws IOException
+    protected COSBase parseTrailerValuesDynamically(COSDictionary trailer) throws IOException
     {
-        FileOutputStream fos = null;
-        try
+        // PDFBOX-1557 - ensure that all COSObject are loaded in the trailer
+        // PDFBOX-1606 - after securityHandler has been instantiated
+        for (COSBase trailerEntry : trailer.getValues())
         {
-            File tmpFile = File.createTempFile(TMP_FILE_PREFIX, ".pdf");
-            fos = new FileOutputStream(tmpFile);
-            IOUtils.copy(input, fos);
-            return tmpFile;
+            if (trailerEntry instanceof COSObject)
+            {
+                COSObject tmpObj = (COSObject) trailerEntry;
+                parseObjectDynamically(tmpObj, false);
+            }
         }
-        finally
+        // parse catalog or root object
+        COSObject root = (COSObject) trailer.getItem(COSName.ROOT);
+        if (root == null)
         {
-            IOUtils.closeQuietly(input);
-            IOUtils.closeQuietly(fos);
+            throw new IOException("Missing root object specification in trailer.");
         }
+        return parseObjectDynamically(root, false);
     }
 
 }

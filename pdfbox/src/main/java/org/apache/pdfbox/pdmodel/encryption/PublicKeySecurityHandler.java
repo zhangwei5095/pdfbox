@@ -29,7 +29,6 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.security.PrivateKey;
 import java.security.SecureRandom;
-import java.security.Security;
 import java.security.cert.CertificateEncodingException;
 import java.security.cert.X509Certificate;
 import java.util.Iterator;
@@ -68,7 +67,6 @@ import org.bouncycastle.cms.KeyTransRecipientId;
 import org.bouncycastle.cms.RecipientId;
 import org.bouncycastle.cms.RecipientInformation;
 import org.bouncycastle.cms.jcajce.JceKeyTransEnvelopedRecipient;
-import org.bouncycastle.jce.provider.BouncyCastleProvider;
 
 /**
  * This class implements the public key security handler described in the PDF specification.
@@ -128,7 +126,7 @@ public final class PublicKeySecurityHandler extends SecurityHandler
                     "Provided decryption material is not compatible with the document");
         }
 
-        decryptMetadata = encryption.isEncryptMetaData();
+        setDecryptMetadata(encryption.isEncryptMetaData());
         if (encryption.getLength() != 0)
         {
             this.keyLength = encryption.getLength();
@@ -207,8 +205,9 @@ public final class PublicKeySecurityHandler extends SecurityHandler
             byte[] accessBytes = new byte[4];
             System.arraycopy(envelopedData, 20, accessBytes, 0, 4);
 
-            currentAccessPermission = new AccessPermission(accessBytes);
+            AccessPermission currentAccessPermission = new AccessPermission(accessBytes);
             currentAccessPermission.setReadOnly();
+            setCurrentAccessPermission(currentAccessPermission);
 
             // what we will put in the SHA1 = the seed + each byte contained in the recipients array
             byte[] sha1Input = new byte[recipientFieldsLength + 20];
@@ -286,8 +285,6 @@ public final class PublicKeySecurityHandler extends SecurityHandler
         }
         try
         {
-            Security.addProvider(new BouncyCastleProvider());
-
             PDEncryption dictionary = doc.getEncryption();
             if (dictionary == null) 
             {
@@ -297,6 +294,10 @@ public final class PublicKeySecurityHandler extends SecurityHandler
             dictionary.setFilter(FILTER);
             dictionary.setLength(this.keyLength);
             dictionary.setVersion(2);
+            
+            // remove CF, StmF, and StrF entries that may be left from a previous encryption
+            dictionary.removeV45filters();
+            
             dictionary.setSubFilter(SUBFILTER);
 
             // create the 20 bytes seed
@@ -316,8 +317,10 @@ public final class PublicKeySecurityHandler extends SecurityHandler
 
             key.init(192, new SecureRandom());
             SecretKey sk = key.generateKey();
-            System.arraycopy(sk.getEncoded(), 0, seed, 0, 20); // create the 20 bytes seed
-            
+
+            // create the 20 bytes seed
+            System.arraycopy(sk.getEncoded(), 0, seed, 0, 20);
+
             byte[][] recipientsField = computeRecipientsField(seed);
             dictionary.setRecipients(recipientsField);
 
@@ -376,9 +379,10 @@ public final class PublicKeySecurityHandler extends SecurityHandler
             byte two = (byte)(permission >>> 8);
             byte three = (byte)(permission >>> 16);
             byte four = (byte)(permission >>> 24);
-            
-            System.arraycopy(seed, 0, pkcs7input, 0, 20); // put this seed in the pkcs7 input
-            
+
+            // put this seed in the pkcs7 input
+            System.arraycopy(seed, 0, pkcs7input, 0, 20);
+
             pkcs7input[20] = four;
             pkcs7input[21] = three;
             pkcs7input[22] = two;
@@ -388,9 +392,9 @@ public final class PublicKeySecurityHandler extends SecurityHandler
             
             ByteArrayOutputStream baos = new ByteArrayOutputStream();
             
-            DEROutputStream k = new DEROutputStream(baos);
+            DEROutputStream derOS = new DEROutputStream(baos);
             
-            k.writeObject(obj);
+            derOS.writeObject(obj);
             
             recipientsField[i] = baos.toByteArray();
             
@@ -414,8 +418,9 @@ public final class PublicKeySecurityHandler extends SecurityHandler
         }
         catch (NoSuchAlgorithmException e)
         {
-            // should never happen, if this happens throw IOException instead
-            throw new RuntimeException("Could not find a suitable javax.crypto provider", e);
+            // happens when using the command line app .jar file
+            throw new IOException("Could not find a suitable javax.crypto provider for algorithm " + 
+                    algorithm + "; possible reason: using an unsigned .jar file", e);
         }
         catch (NoSuchPaddingException e)
         {
@@ -482,5 +487,14 @@ public final class PublicKeySecurityHandler extends SecurityHandler
         DEROctetString octets = new DEROctetString(cipher.doFinal(abyte0));
         RecipientIdentifier recipientId = new RecipientIdentifier(serial);
         return new KeyTransRecipientInfo(recipientId, algorithmId, octets);
+    }
+    
+    /**
+     * {@inheritDoc}
+     */
+    @Override
+    public boolean hasProtectionPolicy()
+    {
+        return policy != null;
     }
 }

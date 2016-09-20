@@ -29,9 +29,10 @@ import org.apache.pdfbox.pdmodel.common.COSObjectable;
  *
  * @author Ben Litchfield
  */
-public class COSArray extends COSBase implements Iterable<COSBase>
+public class COSArray extends COSBase implements Iterable<COSBase>, COSUpdateInfo
 {
     private final List<COSBase> objects = new ArrayList<COSBase>();
+    private boolean needToBeUpdated;
 
     /**
      * Constructor.
@@ -189,7 +190,7 @@ public class COSArray extends COSBase implements Iterable<COSBase>
         {
             obj = ((COSObject)obj).getObject();
         }
-        else if( obj instanceof COSNull )
+        if (obj instanceof COSNull)
         {
             obj = null;
         }
@@ -197,7 +198,7 @@ public class COSArray extends COSBase implements Iterable<COSBase>
     }
 
     /**
-     * This will get an object from the array.  This will NOT derefernce
+     * This will get an object from the array.  This will NOT dereference
      * the COS object.
      *
      * @param index The index into the array to get the object.
@@ -514,6 +515,18 @@ public class COSArray extends COSBase implements Iterable<COSBase>
         return visitor.visitFromArray(this);
     }
 
+    @Override
+    public boolean isNeedToBeUpdated() 
+    {
+      return needToBeUpdated;
+    }
+    
+    @Override
+    public void setNeedToBeUpdated(boolean flag) 
+    {
+      needToBeUpdated = flag;
+    }
+
     /**
      * This will take an COSArray of numbers and convert it to a float[].
      *
@@ -537,9 +550,9 @@ public class COSArray extends COSBase implements Iterable<COSBase>
     public void setFloatArray( float[] value )
     {
         this.clear();
-        for( int i=0; i<value.length; i++ )
+        for (float aValue : value)
         {
-            add( new COSFloat( value[i] ) );
+            add(new COSFloat(aValue));
         }
     }
 
@@ -548,9 +561,9 @@ public class COSArray extends COSBase implements Iterable<COSBase>
      *
      *  @return the COSArray as List
      */
-    public List<?> toList()
+    public List<? extends COSBase> toList()
     {
-        ArrayList<COSBase> retList = new ArrayList<COSBase>(size());
+        List<COSBase> retList = new ArrayList<COSBase>(size());
         for (int i = 0; i < size(); i++)
         {
             retList.add(get(i));

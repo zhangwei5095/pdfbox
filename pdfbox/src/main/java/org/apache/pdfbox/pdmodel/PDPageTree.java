@@ -38,6 +38,7 @@ import java.util.List;
 public class PDPageTree implements COSObjectable, Iterable<PDPage>
 {
     private final COSDictionary root;
+    private final PDDocument document; // optional
 
     /**
      * Constructor for embedding.
@@ -48,6 +49,7 @@ public class PDPageTree implements COSObjectable, Iterable<PDPage>
         root.setItem(COSName.TYPE, COSName.PAGES);
         root.setItem(COSName.KIDS, new COSArray());
         root.setItem(COSName.COUNT, COSInteger.ZERO);
+        document = null;
     }
 
     /**
@@ -57,11 +59,35 @@ public class PDPageTree implements COSObjectable, Iterable<PDPage>
      */
     public PDPageTree(COSDictionary root)
     {
+        this(root, null);
+    }
+    
+    /**
+     * Constructor for reading.
+     *
+     * @param root A page tree root.
+     * @param document The document which contains "root".
+     */
+    PDPageTree(COSDictionary root, PDDocument document)
+    {
         if (root == null)
         {
             throw new IllegalArgumentException("root cannot be null");
         }
-        this.root = root;
+        // repair bad PDFs which contain a Page dict instead of a page tree, see PDFBOX-3154
+        if (COSName.PAGE.equals(root.getCOSName(COSName.TYPE)))
+        {
+            COSArray kids = new COSArray();
+            kids.add(root);
+            this.root = new COSDictionary();
+            this.root.setItem(COSName.KIDS, kids);
+            this.root.setInt(COSName.COUNT, 1);
+        }
+        else
+        {
+            this.root = root;
+        }
+        this.document = document;
     }
 
     /**
@@ -159,14 +185,11 @@ public class PDPageTree implements COSObjectable, Iterable<PDPage>
         public PDPage next()
         {
             COSDictionary next = queue.poll();
+            
+            sanitizeType(next);
 
-            // sanity check
-            if (next.getCOSName(COSName.TYPE) != COSName.PAGE)
-            {
-                throw new IllegalStateException("Expected Page but got " + next);
-            }
-
-            return new PDPage(next);
+            ResourceCache resourceCache = document != null ? document.getResourceCache() : null;
+            return new PDPage(next, resourceCache);
         }
 
         @Override
@@ -185,15 +208,26 @@ public class PDPageTree implements COSObjectable, Iterable<PDPage>
     {
         COSDictionary dict = get(index + 1, root, 0);
 
-        // sanity check
-        if (dict.getCOSName(COSName.TYPE) != COSName.PAGE)
-        {
-            throw new IllegalStateException("Expected Page but got " + dict);
-        }
+        sanitizeType(dict);
 
-        return new PDPage(dict);
+        ResourceCache resourceCache = document != null ? document.getResourceCache() : null;
+        return new PDPage(dict, resourceCache);
     }
-
+    
+    private static void sanitizeType(COSDictionary dictionary)
+    {
+        COSName type = dictionary.getCOSName(COSName.TYPE);
+        if (type == null)
+        {
+            dictionary.setItem(COSName.TYPE, COSName.PAGE);
+            return;
+        }
+        if (!COSName.PAGE.equals(type))
+        {
+            throw new IllegalStateException("Expected 'Page' but found " + type);
+        }
+    }
+    
     /**
      * Returns the given COS page using a depth-first search.
      *
@@ -276,33 +310,56 @@ public class PDPageTree implements COSObjectable, Iterable<PDPage>
 
     /**
      * Returns the index of the given page, or -1 if it does not exist.
+     *
+     * @param page The page to search for.
+     * @return the zero-based index of the given page, or -1 if the page is not found.
      */
     public int indexOf(PDPage page)
     {
-        int num = 0;
-        COSDictionary node = page.getCOSObject();
-        do
+        SearchContext context = new SearchContext(page);
+        if (findPage(context, root))
         {
-            if (isPageTreeNode(node))
+            return context.index;
+        }
+        return -1;
+    }
+
+    private boolean findPage(SearchContext context, COSDictionary node)
+    {
+        for (COSDictionary kid : getKids(node))
+        {
+            if (context.found)
             {
-                // count kids up until this node
-                for (COSDictionary kid : getKids(node))
-                {
-                    if (kid == node)
-                    {
-                        break;
-                    }
-                    num++;
-                }
+                break;
+            }
+            if (isPageTreeNode(kid))
+            {
+                findPage(context, kid);
             }
             else
             {
-                num++;
+                context.visitPage(kid);
             }
-            node = (COSDictionary) node.getDictionaryObject(COSName.PARENT, COSName.P);
         }
-        while (node != null);
-        return num - 1;
+        return context.found;
+    }
+
+    private static final class SearchContext
+    {
+        private final COSDictionary searched;
+        private int index = -1;
+        private boolean found;
+
+        private SearchContext(PDPage page)
+        {
+            this.searched = page.getCOSObject();
+        }
+
+        private void visitPage(COSDictionary current)
+        {
+            index++;
+            found = searched.equals(current);
+        }
     }
 
     /**
@@ -332,6 +389,8 @@ public class PDPageTree implements COSObjectable, Iterable<PDPage>
 
     /**
      * Removes the given page from the page tree.
+     *
+     * @param page The page to remove.
      */
     public void remove(PDPage page)
     {
@@ -363,6 +422,8 @@ public class PDPageTree implements COSObjectable, Iterable<PDPage>
 
     /**
      * Adds the given page to this page tree.
+     * 
+     * @param page The page to add.
      */
     public void add(PDPage page)
     {
@@ -386,5 +447,80 @@ public class PDPageTree implements COSObjectable, Iterable<PDPage>
             }
         }
         while (node != null);
+    }
+    
+    /**
+     * Insert a page before another page within a page tree.
+     *
+     * @param newPage the page to be inserted.
+     * @param nextPage the page that is to be after the new page.
+     * @throws IllegalArgumentException if one attempts to insert a page that isn't part of a page
+     * tree.
+     */
+    public void insertBefore(PDPage newPage, PDPage nextPage)
+    {
+        COSDictionary nextPageDict = nextPage.getCOSObject();
+        COSDictionary parentDict = (COSDictionary) nextPageDict.getDictionaryObject(COSName.PARENT);
+        COSArray kids = (COSArray) parentDict.getDictionaryObject(COSName.KIDS);
+        boolean found = false;
+        for (int i = 0; i < kids.size(); ++i)
+        {
+            COSDictionary pageDict = (COSDictionary) kids.getObject(i);
+            if (pageDict.equals(nextPage.getCOSObject()))
+            {
+                kids.add(i, newPage.getCOSObject());
+                newPage.getCOSObject().setItem(COSName.PARENT, parentDict);
+                found = true;
+                break;
+            }
+        }
+        if (!found)
+        {
+            throw new IllegalArgumentException("attempted to insert before orphan page");
+        }
+        increaseParents(parentDict);
+    }
+
+    /**
+     * Insert a page after another page within a page tree.
+     *
+     * @param newPage the page to be inserted.
+     * @param prevPage the page that is to be before the new page.
+     * @throws IllegalArgumentException if one attempts to insert a page that isn't part of a page
+     * tree.
+     */
+    public void insertAfter(PDPage newPage, PDPage prevPage)
+    {
+        COSDictionary prevPageDict = prevPage.getCOSObject();
+        COSDictionary parentDict = (COSDictionary) prevPageDict.getDictionaryObject(COSName.PARENT);
+        COSArray kids = (COSArray) parentDict.getDictionaryObject(COSName.KIDS);
+        boolean found = false;
+        for (int i = 0; i < kids.size(); ++i)
+        {
+            COSDictionary pageDict = (COSDictionary) kids.getObject(i);
+            if (pageDict.equals(prevPage.getCOSObject()))
+            {
+                kids.add(i + 1, newPage.getCOSObject());
+                newPage.getCOSObject().setItem(COSName.PARENT, parentDict);
+                found = true;
+                break;
+            }
+        }
+        if (!found)
+        {
+            throw new IllegalArgumentException("attempted to insert before orphan page");
+        }
+        increaseParents(parentDict);
+    }
+
+    private void increaseParents(COSDictionary parentDict)
+    {
+        do
+        {
+            int cnt = parentDict.getInt(COSName.COUNT);
+            parentDict.setInt(COSName.COUNT, cnt + 1);
+            parentDict = (COSDictionary) parentDict.getDictionaryObject(COSName.PARENT);
+        }
+        while (parentDict != null);
     }
 }

@@ -27,6 +27,7 @@ import java.text.SimpleDateFormat;
 import java.util.Calendar;
 import java.util.Date;
 import java.util.GregorianCalendar;
+import java.util.Locale;
 import java.util.SimpleTimeZone;
 import java.util.TimeZone;
 import java.util.regex.Matcher;
@@ -45,7 +46,7 @@ import java.util.regex.Pattern;
  * @author Christopher Oezbek
  * 
  */
-public class DateConverter
+public final class DateConverter
 {
 
     // The Date format is supposed to be the PDF_DATE_FORMAT, but not all PDF
@@ -64,9 +65,9 @@ public class DateConverter
     /**
      * According to check-style, Utility classes should not have a public or default constructor.
      */
-    protected DateConverter()
+    private DateConverter()
     {
-    };
+    }
 
     /**
      * This will convert a string to a calendar.
@@ -190,6 +191,7 @@ public class DateConverter
                 }
                 else
                 {
+                    updateZoneId(zone);
                     retval = new GregorianCalendar(zone);
                 }
                 retval.clear();
@@ -229,7 +231,43 @@ public class DateConverter
         }
         return retval;
     }
-    
+
+    /**
+     * Update the zone ID based on the raw offset. This is either GMT, GMT+hh:mm or GMT-hh:mm, where
+     * n is between 1 and 14. The highest negative hour is -14, the highest positive hour is 12.
+     * Zones that don't fit in this schema are set to zone ID "unknown".
+     *
+     * @param tz the time zone to update.
+     */
+    private static void updateZoneId(TimeZone tz)
+    {
+        int offset = tz.getRawOffset();
+        char pm = '+';
+        if (offset < 0)
+        {
+            pm = '-';
+            offset = -offset;
+        }
+        int hh = offset / 3600000;
+        int mm = offset % 3600000 / 60000;
+        if (offset == 0)
+        {
+            tz.setID("GMT");
+        }
+        else if (pm == '+' && hh <= 12)
+        {
+            tz.setID(String.format(Locale.US, "GMT+%02d:%02d", hh, mm));
+        }
+        else if (pm == '-' && hh <= 14)
+        {
+            tz.setID(String.format(Locale.US, "GMT-%02d:%02d", hh, mm));
+        }
+        else
+        {
+            tz.setID("unknown");
+        }
+    }
+
     /**
      * Convert the date to iso 8601 string format.
      * 
@@ -255,20 +293,20 @@ public class DateConverter
 
         retval.append(cal.get(Calendar.YEAR));
         retval.append("-");
-        retval.append(String.format("%02d", cal.get(Calendar.MONTH) + 1));
+        retval.append(String.format(Locale.US, "%02d", cal.get(Calendar.MONTH) + 1));
         retval.append("-");
-        retval.append(String.format("%02d", cal.get(Calendar.DAY_OF_MONTH)));
+        retval.append(String.format(Locale.US, "%02d", cal.get(Calendar.DAY_OF_MONTH)));
         retval.append("T");
-        retval.append(String.format("%02d", cal.get(Calendar.HOUR_OF_DAY)));
+        retval.append(String.format(Locale.US, "%02d", cal.get(Calendar.HOUR_OF_DAY)));
         retval.append(":");
-        retval.append(String.format("%02d", cal.get(Calendar.MINUTE)));
+        retval.append(String.format(Locale.US, "%02d", cal.get(Calendar.MINUTE)));
         retval.append(":");
-        retval.append(String.format("%02d", cal.get(Calendar.SECOND)));
+        retval.append(String.format(Locale.US, "%02d", cal.get(Calendar.SECOND)));
         
         if (printMillis)
         {
             retval.append(".");
-            retval.append(String.format("%03d", cal.get(Calendar.MILLISECOND)));
+            retval.append(String.format(Locale.US, "%03d", cal.get(Calendar.MILLISECOND)));
         }
 
         int timeZone = cal.get(Calendar.ZONE_OFFSET) + cal.get(Calendar.DST_OFFSET);
@@ -328,18 +366,40 @@ public class DateConverter
 
         if (timeZoneString != null)
         {
-            
-            Calendar cal = javax.xml.bind.DatatypeConverter.parseDateTime(
-                        dateString.substring(0, dateString.indexOf(timeZoneString))
-                    );
-            
+            // can't use parseDateTime immediately, first do handling for time that has no seconds
+            int teeIndex = dateString.indexOf('T');
+            int tzIndex = dateString.indexOf(timeZoneString);
+            String toParse = dateString.substring(0, tzIndex);
+            if (tzIndex - teeIndex == 6)
+            {
+                toParse = dateString.substring(0, tzIndex) + ":00";
+            }
+            Calendar cal = javax.xml.bind.DatatypeConverter.parseDateTime(toParse);
+
             TimeZone z = TimeZone.getTimeZone(timeZoneString);
-            cal.setTimeZone(z);
-            
+            cal.setTimeZone(z);            
             return cal;
         }
         else
         {
+            // can't use parseDateTime immediately, first do handling for time that has no seconds
+            int teeIndex = dateString.indexOf('T');
+            if (teeIndex == -1)
+            {
+                return javax.xml.bind.DatatypeConverter.parseDateTime(dateString);
+            }
+            int plusIndex = dateString.indexOf('+', teeIndex + 1);
+            int minusIndex = dateString.indexOf('-', teeIndex + 1);
+            if (plusIndex == -1 && minusIndex == -1)
+            {
+                return javax.xml.bind.DatatypeConverter.parseDateTime(dateString);
+            }
+            plusIndex = Math.max(plusIndex, minusIndex);
+            if (plusIndex - teeIndex == 6)
+            {
+                String toParse = dateString.substring(0, plusIndex) + ":00" + dateString.substring(plusIndex);
+                return javax.xml.bind.DatatypeConverter.parseDateTime(toParse);
+            }
             return javax.xml.bind.DatatypeConverter.parseDateTime(dateString);
         }
     }

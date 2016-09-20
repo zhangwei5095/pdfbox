@@ -16,6 +16,7 @@
  */
 package org.apache.pdfbox.pdmodel.graphics.blend;
 
+import java.awt.Graphics;
 import java.awt.Paint;
 import java.awt.PaintContext;
 import java.awt.Point;
@@ -37,7 +38,7 @@ import java.io.IOException;
  * AWT Paint that adds a soft mask to the alpha channel of the existing parent paint. If the parent
  * paint does not have an alpha channel, a new raster is created.
  * 
- * @author Kühn & Weyh Software, GmbH
+ * @author Kühn &amp; Weyh Software GmbH
  */
 public final class SoftMaskPaint implements Paint
 {
@@ -129,7 +130,9 @@ public final class SoftMaskPaint implements Paint
                     result = Raster.createWritableRaster(
                             colorModel.createCompatibleSampleModel(w, h), new Point(0, 0));
                     BufferedImage resultImage = new BufferedImage(colorModel, result, false, null);
-                    resultImage.getGraphics().drawImage(parentImage, 0, 0, null);
+                    Graphics graphics = resultImage.getGraphics();
+                    graphics.drawImage(parentImage, 0, 0, null);
+                    graphics.dispose();
                 }
             }
             else

@@ -35,9 +35,25 @@ final class TIFFUtil
 {
     private static final Log LOG = LogFactory.getLog(TIFFUtil.class);
 
+    private static String tagSetClassName = "com.sun.media.imageio.plugins.tiff.BaselineTIFFTagSet";
+    
     private TIFFUtil()
     {
     }    
+
+    static
+    {
+        try
+        {
+            String alternateClassName = "com.github.jaiimageio.plugins.tiff.BaselineTIFFTagSet";
+            Class.forName(alternateClassName);
+            tagSetClassName = alternateClassName;
+        }
+        catch (ClassNotFoundException ex)
+        {
+            // ignore
+        }
+    }
 
     /**
      * Sets the ImageIO parameter compression type based on the given image.
@@ -60,17 +76,21 @@ final class TIFFUtil
     }
 
     /**
-     * Updates the given ImageIO metadata with Sun's custom TIFF tags.
-     * {@see https://svn.apache.org/repos/asf/xmlgraphics/commons/tags/commons-1_3_1/src/java/org/
-     *       apache/xmlgraphics/image/writer/imageio/ImageIOTIFFImageWriter.java}
-     * {@see http://download.java.net/media/jai-imageio/javadoc/1.0_01/com/sun/media/imageio/
-     *       plugins/tiff/package-summary.html}
-     * {@see http://partners.adobe.com/public/developer/tiff/index.html}
+     * Updates the given ImageIO metadata with Sun's custom TIFF tags, as described in
+     * the <a href="https://svn.apache.org/repos/asf/xmlgraphics/commons/tags/commons-1_3_1/src/java/org/apache/xmlgraphics/image/writer/imageio/ImageIOTIFFImageWriter.java">org.apache.xmlgraphics.image.writer.imageio.ImageIOTIFFImageWriter
+     * sources</a>, 
+     * the <a href="http://download.java.net/media/jai-imageio/javadoc/1.0_01/com/sun/media/imageio/plugins/tiff/package-summary.html">com.sun.media.imageio.plugins.tiff
+     * package javadoc</a>
+     * and the <a href="http://partners.adobe.com/public/developer/tiff/index.html">TIFF
+     * specification</a>.
+     *
      * @param image buffered image which will be written
      * @param metadata ImageIO metadata
      * @param dpi image dots per inch
+     * @throws IIOInvalidTreeException if something goes wrong
      */
-    public static void updateMetadata(IIOMetadata metadata, BufferedImage image, int dpi)
+    static void updateMetadata(IIOMetadata metadata, BufferedImage image, int dpi)
+            throws IIOInvalidTreeException
     {
         debugLogMetadata(metadata, SUN_TIFF_FORMAT);
 
@@ -85,8 +105,7 @@ final class TIFFUtil
         if (root.getElementsByTagName("TIFFIFD").getLength() == 0)
         {
             ifd = new IIOMetadataNode("TIFFIFD");
-            ifd.setAttribute("tagSets",
-                             "com.sun.media.imageio.plugins.tiff.BaselineTIFFTagSet");
+            ifd.setAttribute("tagSets", tagSetClassName);
             root.appendChild(ifd);
         }
         else
@@ -110,16 +129,8 @@ final class TIFFUtil
             ifd.appendChild(createShortField(262, "PhotometricInterpretation", 0));
         }
         
-        try
-        {
-            metadata.mergeTree(SUN_TIFF_FORMAT, root);
-        }
-        catch (IIOInvalidTreeException e)
-        {
-            // should never happen
-            throw new RuntimeException(e);
-        }
-
+        metadata.mergeTree(SUN_TIFF_FORMAT, root);
+        
         debugLogMetadata(metadata, SUN_TIFF_FORMAT);
     }
 

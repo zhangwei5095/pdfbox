@@ -17,11 +17,14 @@
 package org.apache.pdfbox.pdmodel.interactive.annotation;
 
 import java.io.IOException;
+import java.util.Calendar;
+
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.pdfbox.cos.COSArray;
 import org.apache.pdfbox.cos.COSBase;
 import org.apache.pdfbox.cos.COSDictionary;
+import org.apache.pdfbox.cos.COSInteger;
 import org.apache.pdfbox.cos.COSName;
 import org.apache.pdfbox.cos.COSNumber;
 import org.apache.pdfbox.pdmodel.PDPage;
@@ -48,48 +51,49 @@ public abstract class PDAnnotation implements COSObjectable
     /**
      * An annotation flag.
      */
-    public static final int FLAG_INVISIBLE = 1 << 0;
+    private static final int FLAG_INVISIBLE = 1 << 0;
     /**
      * An annotation flag.
      */
-    public static final int FLAG_HIDDEN = 1 << 1;
+    private static final int FLAG_HIDDEN = 1 << 1;
     /**
      * An annotation flag.
      */
-    public static final int FLAG_PRINTED = 1 << 2;
+    private static final int FLAG_PRINTED = 1 << 2;
     /**
      * An annotation flag.
      */
-    public static final int FLAG_NO_ZOOM = 1 << 3;
+    private static final int FLAG_NO_ZOOM = 1 << 3;
     /**
      * An annotation flag.
      */
-    public static final int FLAG_NO_ROTATE = 1 << 4;
+    private static final int FLAG_NO_ROTATE = 1 << 4;
     /**
      * An annotation flag.
      */
-    public static final int FLAG_NO_VIEW = 1 << 5;
+    private static final int FLAG_NO_VIEW = 1 << 5;
     /**
      * An annotation flag.
      */
-    public static final int FLAG_READ_ONLY = 1 << 6;
+    private static final int FLAG_READ_ONLY = 1 << 6;
     /**
      * An annotation flag.
      */
-    public static final int FLAG_LOCKED = 1 << 7;
+    private static final int FLAG_LOCKED = 1 << 7;
     /**
      * An annotation flag.
      */
-    public static final int FLAG_TOGGLE_NO_VIEW = 1 << 8;
+    private static final int FLAG_TOGGLE_NO_VIEW = 1 << 8;
 
     private final COSDictionary dictionary;
 
     /**
      * Create the correct annotation from the base COS object.
-     * 
+     *
      * @param base The COS object that is the annotation.
      * @return The correctly typed annotation object.
-     * @throws IOException If there is an error while creating the annotation.
+     *
+     * @throws IOException If the annotation type is unknown.
      */
     public static PDAnnotation createAnnotation(COSBase base) throws IOException
     {
@@ -188,16 +192,6 @@ public abstract class PDAnnotation implements COSObjectable
     }
 
     /**
-     * returns the dictionary.
-     * 
-     * @return the dictionary
-     */
-    public COSDictionary getDictionary()
-    {
-        return dictionary;
-    }
-
-    /**
      * The annotation rectangle, defining the location of the annotation on the page in default user space units. This
      * is usually required and should not return null on valid PDF documents. But where this is a parent form field with
      * children, such as radio button collections then the rectangle will be null.
@@ -210,11 +204,10 @@ public abstract class PDAnnotation implements COSObjectable
         PDRectangle rectangle = null;
         if (rectArray != null)
         {
-            if (rectArray.size() == 4
-                    && rectArray.get(0) instanceof COSNumber
-                    && rectArray.get(1) instanceof COSNumber
-                    && rectArray.get(2) instanceof COSNumber
-                    && rectArray.get(3) instanceof COSNumber)
+            if (rectArray.size() == 4 && rectArray.getObject(0) instanceof COSNumber
+                    && rectArray.getObject(1) instanceof COSNumber
+                    && rectArray.getObject(2) instanceof COSNumber
+                    && rectArray.getObject(3) instanceof COSNumber)
             {
                 rectangle = new PDRectangle(rectArray);
             }
@@ -243,7 +236,7 @@ public abstract class PDAnnotation implements COSObjectable
      */
     public int getAnnotationFlags()
     {
-        return getDictionary().getInt(COSName.F, 0);
+        return getCOSObject().getInt(COSName.F, 0);
     }
 
     /**
@@ -253,7 +246,7 @@ public abstract class PDAnnotation implements COSObjectable
      */
     public void setAnnotationFlags(int flags)
     {
-        getDictionary().setInt(COSName.F, flags);
+        getCOSObject().setInt(COSName.F, flags);
     }
 
     /**
@@ -262,18 +255,18 @@ public abstract class PDAnnotation implements COSObjectable
      * @return This object as a standard COS object.
      */
     @Override
-    public COSBase getCOSObject()
+    public COSDictionary getCOSObject()
     {
-        return getDictionary();
+        return dictionary;
     }
 
     /**
-     * Returns the annotations appearance state, which selects the applicable appearance stream
-     * from an appearance subdictionary.
+     * Returns the annotations appearance state, which selects the applicable appearance stream from an appearance
+     * subdictionary.
      */
     public COSName getAppearanceState()
     {
-        COSName name = (COSName) getDictionary().getDictionaryObject(COSName.AS);
+        COSName name = (COSName) getCOSObject().getDictionaryObject(COSName.AS);
         if (name != null)
         {
             return name;
@@ -290,11 +283,11 @@ public abstract class PDAnnotation implements COSObjectable
     {
         if (as == null)
         {
-            getDictionary().removeItem(COSName.AS);
+            getCOSObject().removeItem(COSName.AS);
         }
         else
         {
-            getDictionary().setItem(COSName.AS, COSName.getPDFName(as));
+            getCOSObject().setItem(COSName.AS, COSName.getPDFName(as));
         }
     }
 
@@ -305,13 +298,12 @@ public abstract class PDAnnotation implements COSObjectable
      */
     public PDAppearanceDictionary getAppearance()
     {
-        PDAppearanceDictionary ap = null;
         COSDictionary apDic = (COSDictionary) dictionary.getDictionaryObject(COSName.AP);
         if (apDic != null)
         {
-            ap = new PDAppearanceDictionary(apDic);
+            return new PDAppearanceDictionary(apDic);
         }
-        return ap;
+        return null;
     }
 
     /**
@@ -330,8 +322,8 @@ public abstract class PDAnnotation implements COSObjectable
     }
 
     /**
-     * Returns the appearance stream for this annotation, if any. The annotation state is taken
-     * into account, if present.
+     * Returns the appearance stream for this annotation, if any. The annotation state is taken into account, if
+     * present.
      */
     public PDAppearanceStream getNormalAppearanceStream()
     {
@@ -365,7 +357,7 @@ public abstract class PDAnnotation implements COSObjectable
      */
     public boolean isInvisible()
     {
-        return getDictionary().getFlag( COSName.F, FLAG_INVISIBLE);
+        return getCOSObject().getFlag(COSName.F, FLAG_INVISIBLE);
     }
 
     /**
@@ -375,7 +367,7 @@ public abstract class PDAnnotation implements COSObjectable
      */
     public void setInvisible(boolean invisible)
     {
-        getDictionary().setFlag( COSName.F, FLAG_INVISIBLE, invisible);
+        getCOSObject().setFlag(COSName.F, FLAG_INVISIBLE, invisible);
     }
 
     /**
@@ -385,7 +377,7 @@ public abstract class PDAnnotation implements COSObjectable
      */
     public boolean isHidden()
     {
-        return getDictionary().getFlag( COSName.F, FLAG_HIDDEN);
+        return getCOSObject().getFlag(COSName.F, FLAG_HIDDEN);
     }
 
     /**
@@ -395,7 +387,7 @@ public abstract class PDAnnotation implements COSObjectable
      */
     public void setHidden(boolean hidden)
     {
-        getDictionary().setFlag( COSName.F, FLAG_HIDDEN, hidden);
+        getCOSObject().setFlag(COSName.F, FLAG_HIDDEN, hidden);
     }
 
     /**
@@ -405,7 +397,7 @@ public abstract class PDAnnotation implements COSObjectable
      */
     public boolean isPrinted()
     {
-        return getDictionary().getFlag( COSName.F, FLAG_PRINTED);
+        return getCOSObject().getFlag(COSName.F, FLAG_PRINTED);
     }
 
     /**
@@ -415,7 +407,7 @@ public abstract class PDAnnotation implements COSObjectable
      */
     public void setPrinted(boolean printed)
     {
-        getDictionary().setFlag( COSName.F, FLAG_PRINTED, printed);
+        getCOSObject().setFlag(COSName.F, FLAG_PRINTED, printed);
     }
 
     /**
@@ -425,7 +417,7 @@ public abstract class PDAnnotation implements COSObjectable
      */
     public boolean isNoZoom()
     {
-        return getDictionary().getFlag( COSName.F, FLAG_NO_ZOOM);
+        return getCOSObject().getFlag(COSName.F, FLAG_NO_ZOOM);
     }
 
     /**
@@ -435,7 +427,7 @@ public abstract class PDAnnotation implements COSObjectable
      */
     public void setNoZoom(boolean noZoom)
     {
-        getDictionary().setFlag( COSName.F, FLAG_NO_ZOOM, noZoom);
+        getCOSObject().setFlag(COSName.F, FLAG_NO_ZOOM, noZoom);
     }
 
     /**
@@ -445,7 +437,7 @@ public abstract class PDAnnotation implements COSObjectable
      */
     public boolean isNoRotate()
     {
-        return getDictionary().getFlag( COSName.F, FLAG_NO_ROTATE);
+        return getCOSObject().getFlag(COSName.F, FLAG_NO_ROTATE);
     }
 
     /**
@@ -455,7 +447,7 @@ public abstract class PDAnnotation implements COSObjectable
      */
     public void setNoRotate(boolean noRotate)
     {
-        getDictionary().setFlag( COSName.F, FLAG_NO_ROTATE, noRotate);
+        getCOSObject().setFlag(COSName.F, FLAG_NO_ROTATE, noRotate);
     }
 
     /**
@@ -465,7 +457,7 @@ public abstract class PDAnnotation implements COSObjectable
      */
     public boolean isNoView()
     {
-        return getDictionary().getFlag( COSName.F, FLAG_NO_VIEW);
+        return getCOSObject().getFlag(COSName.F, FLAG_NO_VIEW);
     }
 
     /**
@@ -475,7 +467,7 @@ public abstract class PDAnnotation implements COSObjectable
      */
     public void setNoView(boolean noView)
     {
-        getDictionary().setFlag( COSName.F, FLAG_NO_VIEW, noView);
+        getCOSObject().setFlag(COSName.F, FLAG_NO_VIEW, noView);
     }
 
     /**
@@ -485,7 +477,7 @@ public abstract class PDAnnotation implements COSObjectable
      */
     public boolean isReadOnly()
     {
-        return getDictionary().getFlag( COSName.F, FLAG_READ_ONLY);
+        return getCOSObject().getFlag(COSName.F, FLAG_READ_ONLY);
     }
 
     /**
@@ -495,7 +487,7 @@ public abstract class PDAnnotation implements COSObjectable
      */
     public void setReadOnly(boolean readOnly)
     {
-        getDictionary().setFlag( COSName.F, FLAG_READ_ONLY, readOnly);
+        getCOSObject().setFlag(COSName.F, FLAG_READ_ONLY, readOnly);
     }
 
     /**
@@ -505,7 +497,7 @@ public abstract class PDAnnotation implements COSObjectable
      */
     public boolean isLocked()
     {
-        return getDictionary().getFlag( COSName.F, FLAG_LOCKED);
+        return getCOSObject().getFlag(COSName.F, FLAG_LOCKED);
     }
 
     /**
@@ -515,7 +507,7 @@ public abstract class PDAnnotation implements COSObjectable
      */
     public void setLocked(boolean locked)
     {
-        getDictionary().setFlag( COSName.F, FLAG_LOCKED, locked);
+        getCOSObject().setFlag(COSName.F, FLAG_LOCKED, locked);
     }
 
     /**
@@ -525,7 +517,7 @@ public abstract class PDAnnotation implements COSObjectable
      */
     public boolean isToggleNoView()
     {
-        return getDictionary().getFlag( COSName.F, FLAG_TOGGLE_NO_VIEW);
+        return getCOSObject().getFlag(COSName.F, FLAG_TOGGLE_NO_VIEW);
     }
 
     /**
@@ -535,7 +527,7 @@ public abstract class PDAnnotation implements COSObjectable
      */
     public void setToggleNoView(boolean toggleNoView)
     {
-        getDictionary().setFlag( COSName.F, FLAG_TOGGLE_NO_VIEW, toggleNoView);
+        getCOSObject().setFlag(COSName.F, FLAG_TOGGLE_NO_VIEW, toggleNoView);
     }
 
     /**
@@ -565,17 +557,31 @@ public abstract class PDAnnotation implements COSObjectable
      */
     public String getModifiedDate()
     {
-        return getDictionary().getString(COSName.M);
+        return getCOSObject().getString(COSName.M);
     }
 
     /**
      * This will set the date and time the annotation was modified.
-     * 
-     * @param m the date and time the annotation was created.
+     *
+     * @param m the date and time the annotation was created. Date values used in a PDF shall
+     * conform to a standard date format, which closely follows that of the international standard
+     * ASN.1 (Abstract Syntax Notation One), defined in ISO/IEC 8824. A date shall be a text string
+     * of the form (D:YYYYMMDDHHmmSSOHH'mm). Alternatively, use
+     * {@link #setModifiedDate(java.util.Calendar)}
      */
     public void setModifiedDate(String m)
     {
-        getDictionary().setString(COSName.M, m);
+        getCOSObject().setString(COSName.M, m);
+    }
+
+    /**
+     * This will set the date and time the annotation was modified.
+     *
+     * @param c the date and time the annotation was created.
+     */
+    public void setModifiedDate(Calendar c)
+    {
+        getCOSObject().setDate(COSName.M, c);
     }
 
     /**
@@ -586,7 +592,7 @@ public abstract class PDAnnotation implements COSObjectable
      */
     public String getAnnotationName()
     {
-        return getDictionary().getString(COSName.NM);
+        return getCOSObject().getString(COSName.NM);
     }
 
     /**
@@ -597,7 +603,7 @@ public abstract class PDAnnotation implements COSObjectable
      */
     public void setAnnotationName(String nm)
     {
-        getDictionary().setString(COSName.NM, nm);
+        getCOSObject().setString(COSName.NM, nm);
     }
 
     /**
@@ -607,7 +613,7 @@ public abstract class PDAnnotation implements COSObjectable
      */
     public int getStructParent()
     {
-        return getDictionary().getInt(COSName.STRUCT_PARENT, 0);
+        return getCOSObject().getInt(COSName.STRUCT_PARENT, 0);
     }
 
     /**
@@ -617,9 +623,43 @@ public abstract class PDAnnotation implements COSObjectable
      */
     public void setStructParent(int structParent)
     {
-        getDictionary().setInt(COSName.STRUCT_PARENT, structParent);
+        getCOSObject().setInt(COSName.STRUCT_PARENT, structParent);
     }
 
+    /**
+     * This will retrieve the border array. If none is available, it will return the default, which
+     * is [0 0 1].
+     *
+     * @return the border array.
+     */
+    public COSArray getBorder()
+    {
+        COSBase base = getCOSObject().getDictionaryObject(COSName.BORDER);
+        COSArray border;
+        if (!(base instanceof COSArray))
+        {
+            border = new COSArray();
+            border.add(COSInteger.ZERO);
+            border.add(COSInteger.ZERO);
+            border.add(COSInteger.ONE);
+        }
+        else
+        {
+            border = (COSArray) base;
+        }
+        return border;
+    }
+    
+    /**
+     * This will set the border array.
+     * 
+     * @param borderArray the border array to set.
+     */
+    public void setBorder(COSArray borderArray)
+    {
+        getCOSObject().setItem(COSName.BORDER, borderArray);
+    }
+    
     /**
      * This will set the color used in drawing various elements. As of PDF 1.6 these are : Background of icon when
      * closed Title bar of popup window Border of a link annotation
@@ -631,16 +671,16 @@ public abstract class PDAnnotation implements COSObjectable
      */
     public void setColor(PDColor c)
     {
-        getDictionary().setItem(COSName.C, c.toCOSArray());
+        getCOSObject().setItem(COSName.C, c.toCOSArray());
     }
 
     /**
-     * This will retrieve the color used in drawing various elements. As of PDF
-     * 1.6 these are :
+     * This will retrieve the color used in drawing various elements. As of PDF 1.6 these are :
      * <ul>
      * <li>Background of icon when closed</li>
      * <li>Title bar of popup window</li>
-     * <li>Border of a link annotation</li></ul>
+     * <li>Border of a link annotation</li>
+     * </ul>
      *
      * @return Color object representing the colour
      * 
@@ -652,23 +692,23 @@ public abstract class PDAnnotation implements COSObjectable
 
     protected PDColor getColor(COSName itemName)
     {
-        COSBase c = this.getDictionary().getItem(itemName);
+        COSBase c = this.getCOSObject().getItem(itemName);
         if (c instanceof COSArray)
         {
             PDColorSpace colorSpace = null;
             switch (((COSArray) c).size())
             {
-                case 1:
-                    colorSpace = PDDeviceGray.INSTANCE;
-                    break;
-                case 3:
-                    colorSpace = PDDeviceRGB.INSTANCE;
-                    break;
-                case 4:
-                    colorSpace = PDDeviceCMYK.INSTANCE;
-                    break;
-                default:
-                    break;
+            case 1:
+                colorSpace = PDDeviceGray.INSTANCE;
+                break;
+            case 3:
+                colorSpace = PDDeviceRGB.INSTANCE;
+                break;
+            case 4:
+                colorSpace = PDDeviceCMYK.INSTANCE;
+                break;
+            default:
+                break;
             }
             return new PDColor((COSArray) c, colorSpace);
         }
@@ -682,7 +722,7 @@ public abstract class PDAnnotation implements COSObjectable
      */
     public String getSubtype()
     {
-        return this.getDictionary().getNameAsString(COSName.SUBTYPE);
+        return this.getCOSObject().getNameAsString(COSName.SUBTYPE);
     }
 
     /**
@@ -692,7 +732,7 @@ public abstract class PDAnnotation implements COSObjectable
      */
     public void setPage(PDPage page)
     {
-        this.getDictionary().setItem(COSName.P, page);
+        this.getCOSObject().setItem(COSName.P, page);
     }
 
     /**
@@ -702,7 +742,7 @@ public abstract class PDAnnotation implements COSObjectable
      */
     public PDPage getPage()
     {
-        COSDictionary p = (COSDictionary) this.getDictionary().getDictionaryObject(COSName.P);
+        COSDictionary p = (COSDictionary) this.getCOSObject().getDictionaryObject(COSName.P);
         if (p != null)
         {
             return new PDPage(p);

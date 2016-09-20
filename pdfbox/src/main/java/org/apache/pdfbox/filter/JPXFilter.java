@@ -67,7 +67,7 @@ public final class JPXFilter extends Filter
     }
 
     // try to read using JAI Image I/O
-    private static BufferedImage readJPX(InputStream input, DecodeResult result) throws IOException
+    private BufferedImage readJPX(InputStream input, DecodeResult result) throws IOException
     {
         ImageReader reader = findImageReader("JPEG2000", "Java Advanced Imaging (JAI) Image I/O Tools are not installed");
         ImageInputStream iis = null;
@@ -91,7 +91,10 @@ public final class JPXFilter extends Filter
 
             // "If the image stream uses the JPXDecode filter, this entry is optional
             // and shall be ignored if present"
-            parameters.setInt(COSName.BITS_PER_COMPONENT, image.getColorModel().getComponentSize(0));
+            //
+            // note that indexed color spaces make the BPC logic tricky, see PDFBOX-2204
+            int bpc = image.getColorModel().getPixelSize() / image.getRaster().getNumBands();
+            parameters.setInt(COSName.BITS_PER_COMPONENT, bpc);
 
             // "Decode shall be ignored, except in the case where the image is treated as a mask"
             if (!parameters.getBoolean(COSName.IMAGE_MASK, false))

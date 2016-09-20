@@ -60,7 +60,7 @@ public class PDFXRefStream implements PDFXRef
      */
     public PDFXRefStream()
     {
-        this.stream = new COSStream(new COSDictionary());
+        this.stream = new COSStream();
         streamData = new TreeMap<Long, Object>();
         objectNumbers = new TreeSet<Long>();
     }
@@ -77,37 +77,47 @@ public class PDFXRefStream implements PDFXRef
         {
             throw new IllegalArgumentException("size is not set in xrefstream");
         }
-        stream.setLong(COSName.SIZE, getSizeEntry());
-        stream.setFilters(COSName.FLATE_DECODE);
+        stream.setLong(COSName.SIZE, size);
+    
+        List<Long> indexEntry = getIndexEntry();
+        COSArray indexAsArray = new COSArray();
+        for ( Long i : indexEntry )
+        {
+            indexAsArray.add(COSInteger.get(i));
+        }
+        stream.setItem(COSName.INDEX, indexAsArray);
 
+        int[] wEntry = getWEntry();
+        COSArray wAsArray = new COSArray();
+        for (int j : wEntry)
         {
-            List<Long> indexEntry = getIndexEntry();
-            COSArray indexAsArray = new COSArray();
-            for ( Long i : indexEntry )
-            {
-                indexAsArray.add(COSInteger.get(i));
-            }
-            stream.setItem(COSName.INDEX, indexAsArray);
+            wAsArray.add(COSInteger.get(j));
         }
-        {
-            int[] wEntry = getWEntry();
-            COSArray wAsArray = new COSArray();
-            for ( int i = 0; i < wEntry.length; i++ )
-            {
-                int j = wEntry[i];
-                wAsArray.add(COSInteger.get(j));
-            }
-            stream.setItem(COSName.W, wAsArray);
-            OutputStream unfilteredStream = stream.createUnfilteredStream();
-            writeStreamData(unfilteredStream, wEntry);
-        }
-        Set<COSName> keySet = stream.keySet();
+        stream.setItem(COSName.W, wAsArray);
+        
+        OutputStream outputStream = this.stream.createOutputStream(COSName.FLATE_DECODE);
+        writeStreamData(outputStream, wEntry);
+        outputStream.flush();
+        outputStream.close();
+    
+        Set<COSName> keySet = this.stream.keySet();
         for ( COSName cosName : keySet )
         {
-            COSBase dictionaryObject = stream.getDictionaryObject(cosName);
+            // "Other cross-reference stream entries not listed in Table 17 may be indirect; in fact, 
+            // some (such as Root in Table 15) shall be indirect."
+            if (COSName.ROOT.equals(cosName) || COSName.INFO.equals(cosName) || COSName.PREV.equals(cosName))
+            {
+                continue;
+            }
+            // this one too, because it has already been written in COSWriter.doWriteBody()
+            if (COSName.ENCRYPT.equals(cosName))
+            {
+                continue;
+            }
+            COSBase dictionaryObject = this.stream.getDictionaryObject(cosName);
             dictionaryObject.setDirect(true);
         }
-        return stream;
+        return this.stream;
     }
 
     /**
@@ -206,11 +216,6 @@ public class PDFXRefStream implements PDFXRef
         return w;
     }
 
-    private long getSizeEntry()
-    {
-        return size;
-    }
-
     /**
      * Set the size of the XRef stream.
      * 
@@ -226,8 +231,11 @@ public class PDFXRefStream implements PDFXRef
         LinkedList<Long> linkedList = new LinkedList<Long>();
         Long first = null;
         Long length = null;
-
-        for ( Long objNumber : objectNumbers )
+        Set<Long> objNumbers = new TreeSet<Long>();
+        // add object number 0 to the set
+        objNumbers.add(0L);
+        objNumbers.addAll(objectNumbers);
+        for ( Long objNumber : objNumbers )
         {
             if (first == null)
             {
@@ -269,6 +277,10 @@ public class PDFXRefStream implements PDFXRef
 
     private void writeStreamData(OutputStream os, int[] w) throws IOException
     {
+        // write dummy entry for object number 0
+        writeNumber(os, ENTRY_FREE, w[0]);
+        writeNumber(os, ENTRY_FREE, w[1]);
+        writeNumber(os, 0xFFFF, w[2]);
         // iterate over all streamData and write it in the required format
         for ( Object entry : streamData.values() )
         {
@@ -299,15 +311,13 @@ public class PDFXRefStream implements PDFXRef
                 throw new RuntimeException("unexpected reference type");
             }
         }
-        os.flush();
-        os.close();
     }
 
     /**
      * A class representing an object stream reference. 
      *
      */
-    class ObjectStreamReference
+    static class ObjectStreamReference
     {
         long objectNumberOfObjectStream;
         long offset;
@@ -317,7 +327,7 @@ public class PDFXRefStream implements PDFXRef
      * A class representing a normal reference. 
      *
      */
-    class NormalReference
+    static class NormalReference
     {
         int genNumber;
         long offset;
@@ -327,7 +337,7 @@ public class PDFXRefStream implements PDFXRef
      * A class representing a free reference. 
      *
      */
-    class FreeReference
+    static class FreeReference
     {
         int nextGenNumber;
         long nextFree;

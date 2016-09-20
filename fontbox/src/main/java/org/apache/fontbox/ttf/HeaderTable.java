@@ -30,6 +30,16 @@ public class HeaderTable extends TTFTable
      * Tag to identify this table.
      */
     public static final String TAG = "head";
+
+    /**
+     * Bold macStyle flag.
+     */
+    public static final int MAC_STYLE_BOLD = 1;
+
+    /**
+     * Italic macStyle flag.
+     */
+    public static final int MAC_STYLE_ITALIC = 2;
     
     private float version;
     private float fontRevision;
@@ -48,7 +58,12 @@ public class HeaderTable extends TTFTable
     private short fontDirectionHint;
     private short indexToLocFormat;
     private short glyphDataFormat;
-    
+
+    HeaderTable(TrueTypeFont font)
+    {
+        super(font);
+    }
+
     /**
      * This will read the required data from the stream.
      * 

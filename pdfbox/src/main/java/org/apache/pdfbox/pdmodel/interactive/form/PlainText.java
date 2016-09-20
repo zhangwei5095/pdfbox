@@ -51,10 +51,15 @@ class PlainText
      */
     PlainText(String textValue)
     {
-        List<String> parts = Arrays.asList(textValue.split("\\n"));
+        List<String> parts = Arrays.asList(textValue.replaceAll("\t", " ").split("\\r\\n|\\n|\\r|\\u2028|\\u2029"));
         paragraphs = new ArrayList<Paragraph>();
         for (String part : parts)
         {
+        	// Acrobat prints a space for an empty paragraph
+        	if (part.length() == 0)
+        	{
+        		part = " ";
+        	}
             paragraphs.add(new Paragraph(part));
         }
     }
@@ -123,7 +128,7 @@ class PlainText
      */
     static class Paragraph
     {
-        private String textContent;
+        private final String textContent;
         
         Paragraph(String text)
         {
@@ -159,24 +164,21 @@ class PlainText
             int start = iterator.first();
             int end = iterator.next();
             float lineWidth = 0;
-            float wordWidth = 0f;
-            float whitespaceWidth = 0f;
             
             List<Line> textLines = new ArrayList<Line>();
-            Line textLine =  new Line();
+            Line textLine = new Line();
 
             while (end != BreakIterator.DONE)
             {
-                whitespaceWidth = 0f;
                 String word = textContent.substring(start,end);
-                wordWidth = font.getStringWidth(word) * scale;
+                float wordWidth = font.getStringWidth(word) * scale;
                 
                 lineWidth = lineWidth + wordWidth;
 
                 // check if the last word would fit without the whitespace ending it
                 if (lineWidth >= width && Character.isWhitespace(word.charAt(word.length()-1)))
                 {
-                    whitespaceWidth = font.getStringWidth(word.substring(word.length()-1)) * scale;
+                    float whitespaceWidth = font.getStringWidth(word.substring(word.length()-1)) * scale;
                     lineWidth = lineWidth - whitespaceWidth;
                 }
                 
@@ -207,7 +209,7 @@ class PlainText
      */
     static class Line
     {
-        private List<Word> words = new ArrayList<Word>();
+        private final List<Word> words = new ArrayList<Word>();
         private float lineWidth;
 
         float getWidth()
@@ -263,7 +265,7 @@ class PlainText
     static class Word
     {
         private AttributedString attributedString;
-        private String textContent;
+        private final String textContent;
         
         Word(String text)
         {

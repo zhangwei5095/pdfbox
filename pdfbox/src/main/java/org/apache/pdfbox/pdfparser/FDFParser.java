@@ -16,7 +16,6 @@
  */
 package org.apache.pdfbox.pdfparser;
 
-import java.io.ByteArrayInputStream;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
@@ -27,21 +26,13 @@ import org.apache.pdfbox.cos.COSBase;
 import org.apache.pdfbox.cos.COSDictionary;
 import org.apache.pdfbox.cos.COSDocument;
 import org.apache.pdfbox.cos.COSName;
-import org.apache.pdfbox.cos.COSObject;
 import org.apache.pdfbox.io.IOUtils;
-import org.apache.pdfbox.io.PushBackInputStream;
-import org.apache.pdfbox.io.RandomAccessBufferedFileInputStream;
-import org.apache.pdfbox.pdmodel.fdf.FDFDocument;
+import org.apache.pdfbox.io.RandomAccessBuffer;
+import org.apache.pdfbox.io.RandomAccessFile;
 
 public class FDFParser extends COSParser
 {
     private static final Log LOG = LogFactory.getLog(FDFParser.class);
-
-    private final RandomAccessBufferedFileInputStream raStream;
-
-    private static final InputStream EMPTY_INPUT_STREAM = new ByteArrayInputStream(new byte[0]);
-
-    private File tempPDFFile;
 
     /**
      * Constructs parser for given file using memory buffer.
@@ -65,9 +56,8 @@ public class FDFParser extends COSParser
      */
     public FDFParser(File file) throws IOException
     {
-        super(EMPTY_INPUT_STREAM);
+        super(new RandomAccessFile(file, "r"));
         fileLen = file.length();
-        raStream = new RandomAccessBufferedFileInputStream(file);
         init();
     }
 
@@ -79,10 +69,8 @@ public class FDFParser extends COSParser
      */
     public FDFParser(InputStream input) throws IOException
     {
-        super(EMPTY_INPUT_STREAM);
-        tempPDFFile = createTmpFile(input);
-        fileLen = tempPDFFile.length();
-        raStream = new RandomAccessBufferedFileInputStream(tempPDFFile);
+        super(new RandomAccessBuffer(input));
+        fileLen = source.length();
         init();
     }
 
@@ -101,8 +89,7 @@ public class FDFParser extends COSParser
                         + " does not contain an integer value, but: '" + eofLookupRangeStr + "'");
             }
         }
-        document = new COSDocument(false);
-        pdfSource = new PushBackInputStream(raStream, 4096);
+        document = new COSDocument();
     }
 
     /**
@@ -126,25 +113,7 @@ public class FDFParser extends COSParser
             trailer = rebuildTrailer();
         }
     
-        // PDFBOX-1557 - ensure that all COSObject are loaded in the trailer
-        // PDFBOX-1606 - after securityHandler has been instantiated
-        for (COSBase trailerEntry : trailer.getValues())
-        {
-            if (trailerEntry instanceof COSObject)
-            {
-                COSObject tmpObj = (COSObject) trailerEntry;
-                parseObjectDynamically(tmpObj, false);
-            }
-        }
-        // parse catalog or root object
-        COSObject root = (COSObject)trailer.getItem(COSName.ROOT);
-    
-        if (root == null)
-        {
-            throw new IOException("Missing root object specification in trailer.");
-        }
-    
-        COSBase rootObject = parseObjectDynamically(root, false);
+        COSBase rootObject = parseTrailerValuesDynamically(trailer);
     
         // resolve all objects
         // A FDF doesn't have a catalog, all FDF fields are within the root object
@@ -156,8 +125,7 @@ public class FDFParser extends COSParser
     }
 
     /**
-     * This will parse the stream and populate the COSDocument object.  This will close
-     * the stream when it is done parsing.
+     * This will parse the stream and populate the COSDocument object.
      *
      * @throws IOException If there is an error reading from the stream or corrupt data
      * is found.
@@ -177,55 +145,11 @@ public class FDFParser extends COSParser
         }
         finally
         {
-            IOUtils.closeQuietly(pdfSource);
-            deleteTempFile();
-    
             if (exceptionOccurred && document != null)
             {
-                try
-                {
-                    document.close();
-                    document = null;
-                }
-                catch (IOException ioe)
-                {
-                }
+                IOUtils.closeQuietly(document);
+                document = null;
             }
         }
     }
-
-    /**
-     * This will get the FDF document that was parsed.  When you are done with
-     * this document you must call close() on it to release resources.
-     *
-     * @return The document at the PD layer.
-     *
-     * @throws IOException If there is an error getting the document.
-     */
-    public FDFDocument getFDFDocument() throws IOException
-    {
-        return new FDFDocument( getDocument() );
-    }
-
-    /**
-     * Remove the temporary file. A temporary file is created if this class is instantiated with an InputStream
-     */
-    private void deleteTempFile()
-    {
-        if (tempPDFFile != null)
-        {
-            try
-            {
-                if (!tempPDFFile.delete())
-                {
-                    LOG.warn("Temporary file '" + tempPDFFile.getName() + "' can't be deleted");
-                }
-            }
-            catch (SecurityException e)
-            {
-                LOG.warn("Temporary file '" + tempPDFFile.getName() + "' can't be deleted", e);
-            }
-        }
-    }
-
 }

@@ -24,7 +24,7 @@ import java.io.InputStream;
 /**
  * OpenType font file parser.
  */
-public class OTFParser extends TTFParser
+public final class OTFParser extends TTFParser
 {
     /**
      * Constructor.
@@ -74,34 +74,40 @@ public class OTFParser extends TTFParser
     }
 
     @Override
-    public OpenTypeFont parse(TTFDataStream raf) throws IOException
+    OpenTypeFont parse(TTFDataStream raf) throws IOException
     {
         return (OpenTypeFont)super.parse(raf);
     }
-
+    
     @Override
-    protected OpenTypeFont newFont(TTFDataStream raf)
+    OpenTypeFont newFont(TTFDataStream raf)
     {
         return new OpenTypeFont(raf);
     }
 
     @Override
-    protected TTFTable readTable(String tag)
+    protected TTFTable readTable(TrueTypeFont font, String tag)
     {
         // todo: this is a stub, a full implementation is needed
 
         if (tag.equals("BASE") || tag.equals("GDEF") || tag.equals("GPOS") ||
             tag.equals("GSUB") || tag.equals("JSTF"))
         {
-            return new OTLTable();
+            return new OTLTable(font);
         }
         else if (tag.equals("CFF "))
         {
-            return new CFFTable();
+            return new CFFTable(font);
         }
         else
         {
-            return super.readTable(tag);
+            return super.readTable(font, tag);
         }
+    }
+
+    @Override
+    protected boolean allowCFF()
+    {
+        return true;
     }
 }

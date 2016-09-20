@@ -20,7 +20,6 @@ import java.awt.geom.AffineTransform;
 import java.io.IOException;
 
 import org.apache.pdfbox.cos.COSArray;
-import org.apache.pdfbox.cos.COSBase;
 import org.apache.pdfbox.cos.COSDictionary;
 import org.apache.pdfbox.cos.COSFloat;
 import org.apache.pdfbox.cos.COSName;
@@ -86,55 +85,10 @@ public abstract class PDAbstractPattern implements COSObjectable
      * This will get the underlying dictionary.
      * @return The dictionary for these pattern resources.
      */
-    public COSDictionary getCOSDictionary()
-    {
-        return patternDictionary;
-    }
-
-    /**
-     * Convert this standard java object to a COS object.
-     * @return The cos object that matches this Java object.
-     */
     @Override
-    public COSBase getCOSObject()
+    public COSDictionary getCOSObject()
     {
         return patternDictionary;
-    }
-
-    /**
-     * Sets the filter entry of the encryption dictionary.
-     * @param filter The filter name.
-     */
-    public void setFilter(String filter)
-    {
-        patternDictionary.setItem(COSName.FILTER, COSName.getPDFName(filter));
-    }
-
-    /**
-     * Get the name of the filter.
-     * @return The filter name contained in this encryption dictionary.
-     */
-    public String getFilter()
-    {
-        return patternDictionary.getNameAsString(COSName.FILTER);
-    }
-
-    /**
-     * This will set the length of the content stream.
-     * @param length The new stream length.
-     */
-    public void setLength(int length)
-    {
-        patternDictionary.setInt(COSName.LENGTH, length);
-    }
-
-    /**
-     * This will return the length of the content stream.
-     * @return The length of the content stream
-     */
-    public int getLength()
-    {
-        return patternDictionary.getInt(COSName.LENGTH, 0);
     }
 
     /**
@@ -175,7 +129,7 @@ public abstract class PDAbstractPattern implements COSObjectable
      */
     public Matrix getMatrix()
     {
-        COSArray array = (COSArray)getCOSDictionary().getDictionaryObject(COSName.MATRIX);
+        COSArray array = (COSArray)getCOSObject().getDictionaryObject(COSName.MATRIX);
         if (array != null)
         {
             return new Matrix(array);
@@ -200,7 +154,7 @@ public abstract class PDAbstractPattern implements COSObjectable
         {
             matrix.add(new COSFloat((float)v));
         }
-        getCOSDictionary().setItem(COSName.MATRIX, matrix);
+        getCOSObject().setItem(COSName.MATRIX, matrix);
     }
 
 }

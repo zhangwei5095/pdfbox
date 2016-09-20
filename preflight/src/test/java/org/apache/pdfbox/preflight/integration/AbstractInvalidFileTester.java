@@ -25,19 +25,16 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.io.OutputStream;
 
-import javax.activation.FileDataSource;
-
-import org.junit.Assert;
-
-import org.apache.commons.io.IOUtils;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
+import org.apache.pdfbox.io.IOUtils;
 import org.apache.pdfbox.preflight.PreflightDocument;
 import org.apache.pdfbox.preflight.ValidationResult;
 import org.apache.pdfbox.preflight.ValidationResult.ValidationError;
 import org.apache.pdfbox.preflight.exception.ValidationException;
 import org.apache.pdfbox.preflight.parser.PreflightParser;
 import org.junit.After;
+import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -92,8 +89,7 @@ public abstract class AbstractInvalidFileTester
         PreflightDocument document = null;
         try
         {
-            FileDataSource bds = new FileDataSource(path);
-            PreflightParser parser = new PreflightParser(bds);
+            PreflightParser parser = new PreflightParser(path);
             parser.parse();
             document = parser.getPreflightDocument();
             document.validate();

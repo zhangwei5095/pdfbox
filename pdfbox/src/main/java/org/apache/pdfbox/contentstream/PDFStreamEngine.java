@@ -24,7 +24,6 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Stack;
@@ -52,6 +51,7 @@ import org.apache.pdfbox.pdmodel.graphics.PDLineDashPattern;
 import org.apache.pdfbox.pdmodel.graphics.color.PDColor;
 import org.apache.pdfbox.pdmodel.graphics.color.PDColorSpace;
 import org.apache.pdfbox.pdmodel.graphics.form.PDFormXObject;
+import org.apache.pdfbox.pdmodel.graphics.form.PDTransparencyGroup;
 import org.apache.pdfbox.pdmodel.graphics.pattern.PDTilingPattern;
 import org.apache.pdfbox.pdmodel.graphics.state.PDGraphicsState;
 import org.apache.pdfbox.pdmodel.graphics.state.PDTextState;
@@ -68,11 +68,11 @@ import org.apache.pdfbox.contentstream.operator.OperatorProcessor;
  * 
  * @author Ben Litchfield
  */
-public class PDFStreamEngine
+public abstract class PDFStreamEngine
 {
     private static final Log LOG = LogFactory.getLog(PDFStreamEngine.class);
 
-    private final Map<String, OperatorProcessor> operators = new HashMap<String, OperatorProcessor>();
+    private final Map<String, OperatorProcessor> operators = new HashMap<String, OperatorProcessor>(80);
 
     private Matrix textMatrix;
     private Matrix textLineMatrix;
@@ -87,7 +87,7 @@ public class PDFStreamEngine
     /**
      * Creates a new PDFStreamEngine.
      */
-    public PDFStreamEngine()
+    protected PDFStreamEngine()
     {
     }
 
@@ -143,7 +143,7 @@ public class PDFStreamEngine
     public void processPage(PDPage page) throws IOException
     {
         initPage(page);
-        if (page.getStream() != null)
+        if (page.hasContents())
         {
             isProcessingPage = true;
             processStream(page);
@@ -157,7 +157,7 @@ public class PDFStreamEngine
      * @param form transparency group (form) XObject
      * @throws IOException if the transparency group cannot be processed
      */
-    public void showTransparencyGroup(PDFormXObject form) throws IOException
+    public void showTransparencyGroup(PDTransparencyGroup form) throws IOException
     {
         processTransparencyGroup(form);
     }
@@ -181,7 +181,7 @@ public class PDFStreamEngine
     /**
      * Processes a soft mask transparency group stream.
      */
-    protected void processSoftMask(PDFormXObject group) throws IOException
+    protected void processSoftMask(PDTransparencyGroup group) throws IOException
     {
         // clear the current soft mask (this mask) to avoid recursion
         saveGraphicsState();
@@ -193,7 +193,7 @@ public class PDFStreamEngine
     /**
      * Processes a transparency group stream.
      */
-    protected void processTransparencyGroup(PDFormXObject group) throws IOException
+    protected void processTransparencyGroup(PDTransparencyGroup group) throws IOException
     {
         if (currentPage == null)
         {
@@ -221,6 +221,7 @@ public class PDFStreamEngine
      *
      * @param charProc Type 3 character procedure
      * @param textRenderingMatrix the Text Rendering Matrix
+     * @throws IOException if there is an error reading or parsing the character content stream.
      */
     protected void processType3Stream(PDType3CharProc charProc, Matrix textRenderingMatrix)
             throws IOException
@@ -263,6 +264,7 @@ public class PDFStreamEngine
      *
      * @param annotation The annotation containing the appearance stream to process.
      * @param appearance The appearance stream to process.
+     * @throws IOException If there is an error reading or parsing the appearance content stream.
      */
     protected void processAnnotation(PDAnnotation annotation, PDAppearanceStream appearance)
             throws IOException
@@ -275,7 +277,7 @@ public class PDFStreamEngine
         Matrix matrix = appearance.getMatrix();
 
         // zero-sized rectangles are not valid
-        if (rect.getWidth() > 0 && rect.getHeight() > 0)
+        if (rect != null && rect.getWidth() > 0 && rect.getHeight() > 0 && bbox != null)
         {
             // transformed appearance box  fixme: may be an arbitrary shape
             Rectangle2D transformedBox = bbox.transform(matrix).getBounds2D();
@@ -288,9 +290,12 @@ public class PDFStreamEngine
             a.concatenate(Matrix.getTranslateInstance((float) -transformedBox.getX(),
                     (float) -transformedBox.getY()));
 
-            // Matrix shall be concatenated with A to form a matrix AA that maps from the appearance��s
+            // Matrix shall be concatenated with A to form a matrix AA that maps from the appearance's
             // coordinate system to the annotation's rectangle in default user space
-            Matrix aa = Matrix.concatenate(matrix, a);
+            //
+            // HOWEVER only the opposite order works for rotated pages with 
+            // filled fields / annotations that have a matrix in the appearance stream, see PDFBOX-3083
+            Matrix aa = Matrix.concatenate(a, matrix);
 
             // make matrix AA the CTM
             getGraphicsState().setCurrentTransformationMatrix(aa);
@@ -311,6 +316,7 @@ public class PDFStreamEngine
      * @param tilingPattern the tiling pattern
      * @param color color to use, if this is an uncoloured pattern, otherwise null.
      * @param colorSpace color space to use, if this is an uncoloured pattern, otherwise null.
+     * @throws IOException if there is an error reading or parsing the tiling pattern content stream.
      */
     protected final void processTilingPattern(PDTilingPattern tilingPattern, PDColor color,
                                               PDColorSpace colorSpace) throws IOException
@@ -326,6 +332,7 @@ public class PDFStreamEngine
      * @param color color to use, if this is an uncoloured pattern, otherwise null.
      * @param colorSpace color space to use, if this is an uncoloured pattern, otherwise null.
      * @param patternMatrix the pattern matrix, may be overridden for custom rendering.
+     * @throws IOException if there is an error reading or parsing the tiling pattern content stream.
      */
     protected final void processTilingPattern(PDTilingPattern tilingPattern, PDColor color,
                                               PDColorSpace colorSpace, Matrix patternMatrix)
@@ -396,9 +403,10 @@ public class PDFStreamEngine
     }
 
     /**
-     * Process a child stream of the given page. Cannot be used with #processPage(PDPage).
+     * Process a child stream of the given page. Cannot be used with {@link #processPage(PDPage)}.
      *
      * @param contentStream the child content stream
+     * @param page
      * @throws IOException if there is an exception while processing the stream
      */
     protected void processChildStream(PDContentStream contentStream, PDPage page) throws IOException
@@ -444,35 +452,31 @@ public class PDFStreamEngine
 
     /**
      * Processes the operators of the given content stream.
+     *
+     * @param contentStream to content stream to parse.
+     * @throws IOException if there is an error reading or parsing the content stream.
      */
     private void processStreamOperators(PDContentStream contentStream) throws IOException
     {
         List<COSBase> arguments = new ArrayList<COSBase>();
-        PDFStreamParser parser = new PDFStreamParser(contentStream.getContentStream());
-        try
+        PDFStreamParser parser = new PDFStreamParser(contentStream);
+        Object token = parser.parseNextToken();
+        while (token != null)
         {
-            Iterator<Object> iter = parser.getTokenIterator();
-            while (iter.hasNext())
+            if (token instanceof COSObject)
             {
-                Object token = iter.next();
-                if (token instanceof COSObject)
-                {
-                    arguments.add(((COSObject) token).getObject());
-                }
-                else if (token instanceof Operator)
-                {
-                    processOperator((Operator) token, arguments);
-                    arguments = new ArrayList<COSBase>();
-                }
-                else
-                {
-                    arguments.add((COSBase) token);
-                }
+                arguments.add(((COSObject) token).getObject());
             }
-        }
-        finally
-        {
-            parser.close();
+            else if (token instanceof Operator)
+            {
+                processOperator((Operator) token, arguments);
+                arguments = new ArrayList<COSBase>();
+            }
+            else
+            {
+                arguments.add((COSBase) token);
+            }
+            token = parser.parseNextToken();
         }
     }
 
@@ -571,7 +575,12 @@ public class PDFStreamEngine
         PDTextState textState = getGraphicsState().getTextState();
         float fontSize = textState.getFontSize();
         float horizontalScaling = textState.getHorizontalScaling() / 100f;
-        boolean isVertical = textState.getFont().isVertical();
+        PDFont font = textState.getFont();
+        boolean isVertical = false;
+        if (font != null)
+        {
+            isVertical = font.isVertical();
+        }
 
         for (COSBase obj : array)
         {
@@ -687,7 +696,11 @@ public class PDFStreamEngine
 
             // process the decoded glyph
             saveGraphicsState();
+            Matrix textMatrixOld = textMatrix;
+            Matrix textLineMatrixOld = textLineMatrix;
             showGlyph(textRenderingMatrix, font, code, unicode, w);
+            textMatrix = textMatrixOld;
+            textLineMatrix = textLineMatrixOld;
             restoreGraphicsState();
 
             // calculate the combined displacements

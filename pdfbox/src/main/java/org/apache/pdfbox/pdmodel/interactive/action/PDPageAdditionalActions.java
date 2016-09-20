@@ -16,9 +16,8 @@
  */
 package org.apache.pdfbox.pdmodel.interactive.action;
 
-import org.apache.pdfbox.cos.COSBase;
 import org.apache.pdfbox.cos.COSDictionary;
-
+import org.apache.pdfbox.cos.COSName;
 import org.apache.pdfbox.pdmodel.common.COSObjectable;
 
 /**
@@ -56,17 +55,7 @@ public class PDPageAdditionalActions implements COSObjectable
      * @return The cos object that matches this Java object.
      */
     @Override
-    public COSBase getCOSObject()
-    {
-        return actions;
-    }
-
-    /**
-     * Convert this standard java object to a COS object.
-     *
-     * @return The cos object that matches this Java object.
-     */
-    public COSDictionary getCOSDictionary()
+    public COSDictionary getCOSObject()
     {
         return actions;
     }
@@ -81,7 +70,7 @@ public class PDPageAdditionalActions implements COSObjectable
      */
     public PDAction getO()
     {
-        COSDictionary o = (COSDictionary)actions.getDictionaryObject( "O" );
+        COSDictionary o = (COSDictionary) actions.getDictionaryObject(COSName.O);
         PDAction retval = null;
         if( o != null )
         {
@@ -100,7 +89,7 @@ public class PDPageAdditionalActions implements COSObjectable
      */
     public void setO( PDAction o )
     {
-        actions.setItem( "O", o );
+        actions.setItem(COSName.O, o);
     }
 
     /**

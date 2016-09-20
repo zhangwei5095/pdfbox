@@ -27,18 +27,15 @@ import java.awt.image.WritableRaster;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.Arrays;
-
+import javax.imageio.stream.ImageInputStream;
+import javax.imageio.stream.MemoryCacheImageInputStream;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.pdfbox.cos.COSArray;
+import org.apache.pdfbox.cos.COSNumber;
 import org.apache.pdfbox.io.IOUtils;
 import org.apache.pdfbox.pdmodel.graphics.color.PDColorSpace;
 import org.apache.pdfbox.pdmodel.graphics.color.PDIndexed;
-
-import javax.imageio.stream.ImageInputStream;
-import javax.imageio.stream.MemoryCacheImageInputStream;
-import org.apache.pdfbox.cos.COSNumber;
-import org.apache.pdfbox.pdmodel.common.PDMemoryStream;
 
 /**
  * Reads a sampled image from a PDF file.
@@ -112,15 +109,7 @@ final class SampledImageReader
      */
     public static BufferedImage getRGBImage(PDImage pdImage, COSArray colorKey) throws IOException
     {
-        if (pdImage.getStream() instanceof PDMemoryStream)
-        {
-            // for inline images
-            if (pdImage.getStream().getLength() == 0)
-            {
-                throw new IOException("Image stream is empty");
-            }
-        }
-        else if (pdImage.getStream().getStream().getFilteredLength() == 0)
+        if (pdImage.isEmpty())
         {
             throw new IOException("Image stream is empty");
         }
@@ -132,6 +121,11 @@ final class SampledImageReader
         final int height = pdImage.getHeight();
         final int bitsPerComponent = pdImage.getBitsPerComponent();
         final float[] decode = getDecodeArray(pdImage);
+
+        if (width <= 0 || height <= 0)
+        {
+            throw new IOException("image weight and height must be positive");
+        }
 
         //
         // An AWT raster must use 8/16/32 bits per component. Images with < 8bpc
@@ -172,7 +166,7 @@ final class SampledImageReader
         try
         {
             // create stream
-            iis = pdImage.getStream().createInputStream();
+            iis = pdImage.createInputStream();
             final boolean isIndexed = colorSpace instanceof PDIndexed;
 
             int rowLen = width / 8;
@@ -199,8 +193,8 @@ final class SampledImageReader
             for (int y = 0; y < height; y++)
             {
                 int x = 0;
-                iis.read(buff);
-                for (int r = 0; r < rowLen; r++)
+                int readLen = iis.read(buff);
+                for (int r = 0; r < rowLen && r < readLen; r++)
                 {
                     int value = buff[r];
                     int mask = 128;
@@ -215,6 +209,11 @@ final class SampledImageReader
                             break;
                         }
                     }
+                }
+                if (readLen != rowLen)
+                {
+                    LOG.warn("premature EOF, image will be incomplete");
+                    break;
                 }
             }
 
@@ -236,28 +235,24 @@ final class SampledImageReader
     private static BufferedImage from8bit(PDImage pdImage, WritableRaster raster)
             throws IOException
     {
-        InputStream input = pdImage.getStream().createInputStream();
+        InputStream input = pdImage.createInputStream();
         try
         {
             // get the raster's underlying byte buffer
             byte[][] banks = ((DataBufferByte) raster.getDataBuffer()).getBankData();
-            byte[] source = IOUtils.toByteArray(input);
-
             final int width = pdImage.getWidth();
             final int height = pdImage.getHeight();
             final int numComponents = pdImage.getColorSpace().getNumberOfComponents();
             int max = width * height;
-
-            for (int c = 0; c < numComponents; c++)
+            byte[] tempBytes = new byte[numComponents];
+            for (int i = 0; i < max; i++)
             {
-                int sourceOffset = c;
-                for (int i = 0; i < max; i++)
+                input.read(tempBytes);
+                for (int c = 0; c < numComponents; c++)
                 {
-                    banks[c][i] = source[sourceOffset];
-                    sourceOffset += numComponents;
+                    banks[c][i] = tempBytes[0+c];
                 }
             }
-
             // use the color space to convert the image to RGB
             return pdImage.getColorSpace().toRGBImage(raster);
         }
@@ -283,7 +278,7 @@ final class SampledImageReader
         try
         {
             // create stream
-            iis = new MemoryCacheImageInputStream(pdImage.getStream().createInputStream());
+            iis = new MemoryCacheImageInputStream(pdImage.createInputStream());
             final float sampleMax = (float)Math.pow(2, bitsPerComponent) - 1f;
             final boolean isIndexed = colorSpace instanceof PDIndexed;
 

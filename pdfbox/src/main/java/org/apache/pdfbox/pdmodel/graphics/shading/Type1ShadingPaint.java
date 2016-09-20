@@ -25,7 +25,6 @@ import java.awt.geom.AffineTransform;
 import java.awt.geom.Rectangle2D;
 import java.awt.image.ColorModel;
 import java.io.IOException;
-
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.pdfbox.util.Matrix;
@@ -37,8 +36,8 @@ class Type1ShadingPaint implements Paint
 {
     private static final Log LOG = LogFactory.getLog(Type1ShadingPaint.class);
 
-    private PDShadingType1 shading;
-    private Matrix matrix;
+    private final PDShadingType1 shading;
+    private final Matrix matrix;
 
     /**
      * Constructor.
@@ -64,7 +63,7 @@ class Type1ShadingPaint implements Paint
     {
         try
         {
-            return new Type1ShadingContext(shading, cm, xform, matrix, deviceBounds);
+            return new Type1ShadingContext(shading, cm, xform, matrix);
         }
         catch (IOException e)
         {

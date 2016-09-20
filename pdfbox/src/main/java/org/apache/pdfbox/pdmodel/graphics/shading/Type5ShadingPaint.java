@@ -25,7 +25,6 @@ import java.awt.geom.AffineTransform;
 import java.awt.geom.Rectangle2D;
 import java.awt.image.ColorModel;
 import java.io.IOException;
-
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.pdfbox.util.Matrix;
@@ -37,8 +36,8 @@ class Type5ShadingPaint implements Paint
 {
     private static final Log LOG = LogFactory.getLog(Type5ShadingPaint.class);
 
-    private PDShadingType5 shading;
-    private Matrix matrix;
+    private final PDShadingType5 shading;
+    private final Matrix matrix;
 
     /**
      * Constructor.

@@ -16,7 +16,6 @@
  */
 package org.apache.pdfbox.pdmodel.interactive.viewerpreferences;
 
-import org.apache.pdfbox.cos.COSBase;
 import org.apache.pdfbox.cos.COSDictionary;
 import org.apache.pdfbox.cos.COSName;
 
@@ -58,7 +57,7 @@ public class PDViewerPreferences implements COSObjectable
     /**
      * Enumeration containing all valid values for NonFullScreenPageMode.
      */
-    public static enum NON_FULL_SCREEN_PAGE_MODE
+    public enum NON_FULL_SCREEN_PAGE_MODE
     {
         /**
          *  From PDF Reference: "Neither document outline nor thumbnail images visible".
@@ -93,7 +92,7 @@ public class PDViewerPreferences implements COSObjectable
     /**
      * Enumeration containing all valid values for ReadingDirection.
      */
-    public static enum READING_DIRECTION
+    public enum READING_DIRECTION
     {
         /**
          * left to right.
@@ -138,7 +137,7 @@ public class PDViewerPreferences implements COSObjectable
     /**
      * Enumeration containing all valid values for boundaries.
      */
-    public static enum BOUNDARY
+    public enum BOUNDARY
     {
         /**
          * use media box as boundary.
@@ -165,7 +164,7 @@ public class PDViewerPreferences implements COSObjectable
     /**
      * Enumeration containing all valid values for duplex.
      */
-    public static enum DUPLEX
+    public enum DUPLEX
     {
         /**
          * simplex printing.
@@ -184,7 +183,7 @@ public class PDViewerPreferences implements COSObjectable
     /**
      * Enumeration containing all valid values for printscaling.
      */
-    public static enum PRINT_SCALING
+    public enum PRINT_SCALING
     {
         /**
          * no scaling.
@@ -196,7 +195,7 @@ public class PDViewerPreferences implements COSObjectable
         AppDefault
     }
 
-    private COSDictionary prefs;
+    private final COSDictionary prefs;
 
     /**
      * Constructor that is used for a preexisting dictionary.
@@ -213,17 +212,8 @@ public class PDViewerPreferences implements COSObjectable
      *
      * @return The underlying info dictionary.
      */
-    public COSDictionary getDictionary()
-    {
-        return prefs;
-    }
-
-    /**
-     * Convert this standard java object to a COS object.
-     *
-     * @return The cos object that matches this Java object.
-     */
-    public COSBase getCOSObject()
+    @Override
+    public COSDictionary getCOSObject()
     {
         return prefs;
     }

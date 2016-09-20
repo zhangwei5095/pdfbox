@@ -16,29 +16,30 @@
  */
 package org.apache.pdfbox.pdmodel.interactive.form;
 
+import java.io.IOException;
+import java.util.List;
+
 import org.apache.pdfbox.cos.COSDictionary;
 import org.apache.pdfbox.cos.COSName;
 
 /**
  * A combo box consisting of a drop-down list.
  * May be accompanied by an editable text box in which non-predefined values may be entered.
+ * 
  * @author John Hewson
  */
 public final class PDComboBox extends PDChoice
 {
-    /**
-     *  Ff-flag.
-     */
     private static final int FLAG_EDIT = 1 << 18;
     
     /**
-     * @see PDFieldTreeNode#PDFieldTreeNode(PDAcroForm)
+     * @see PDField#PDField(PDAcroForm)
      *
-     * @param theAcroForm The acroform.
+     * @param acroForm The acroform.
      */
-    public PDComboBox(PDAcroForm theAcroForm)
+    public PDComboBox(PDAcroForm acroForm)
     {
-        super( theAcroForm );
+        super(acroForm);
         setCombo(true);
     }    
 
@@ -47,11 +48,11 @@ public final class PDComboBox extends PDChoice
      * 
      * @param acroForm The form that this field is part of.
      * @param field the PDF object to represent as a field.
-     * @param parentNode the parent node of the node to be created
+     * @param parent the parent node of the node
      */
-    public PDComboBox(PDAcroForm acroForm, COSDictionary field, PDFieldTreeNode parentNode)
+    PDComboBox(PDAcroForm acroForm, COSDictionary field, PDNonTerminalField parent)
     {
-        super(acroForm, field, parentNode);
+        super(acroForm, field, parent);
     }
 
     /**
@@ -61,7 +62,7 @@ public final class PDComboBox extends PDChoice
      */
     public boolean isEdit()
     {
-        return getDictionary().getFlag( COSName.FF, FLAG_EDIT );
+        return getCOSObject().getFlag(COSName.FF, FLAG_EDIT);
     }
 
     /**
@@ -69,39 +70,25 @@ public final class PDComboBox extends PDChoice
      *
      * @param edit The value for Edit.
      */
-    public void setEdit( boolean edit )
+    public void setEdit(boolean edit)
     {
-        getDictionary().setFlag( COSName.FF, FLAG_EDIT, edit );
+        getCOSObject().setFlag(COSName.FF, FLAG_EDIT, edit);
     }
-
-    /**
-     * Sets the field value - the 'V' key.
-     * 
-     * @param value the value
-     */
+    
     @Override
-    public void setValue(String value)
+    void constructAppearances() throws IOException
     {
-        if (value != null)
+        AppearanceGeneratorHelper apHelper;
+        apHelper = new AppearanceGeneratorHelper(this);
+        List<String> values = getValue();
+        
+        if (!values.isEmpty())
         {
-            // check if the options contain the value to be set is
-            // only necessary if the edit flag has not been set.
-            // If the edit flag has been set the field allows a custom value.
-            if (!isEdit() && getOptions().indexOf((String) value) == -1)
-            {
-                throw new IllegalArgumentException("The list box does not contain the given value.");
-            }
-            else
-            {
-                getDictionary().setString(COSName.V, (String)value);
-                // remove I key for single valued choice field
-                setSelectedOptionsIndex(null);
-            }
+            apHelper.setAppearanceValue(values.get(0));
         }
         else
         {
-            getDictionary().removeItem(COSName.V);
+            apHelper.setAppearanceValue("");
         }
-        // TODO create/update appearance
     }
 }

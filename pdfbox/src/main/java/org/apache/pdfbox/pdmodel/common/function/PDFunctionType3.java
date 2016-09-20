@@ -30,10 +30,10 @@ import java.io.IOException;
  */
 public class PDFunctionType3 extends PDFunction
 {
-
     private COSArray functions = null;
     private COSArray encode = null;
     private COSArray bounds = null;
+    private PDFunction[] functionsArray = null;
     
     /**
      * Constructor.
@@ -68,13 +68,21 @@ public class PDFunctionType3 extends PDFunction
         PDRange domain = getDomainForInput(0);
         // clip input value to domain
         x = clipToRange(x, domain.getMin(), domain.getMax());
-
-        COSArray functionsArray = getFunctions();
-        int numberOfFunctions = functionsArray.size();
-        // This doesn't make sense but it may happen ...
-        if (numberOfFunctions == 1) 
+        
+        if (functionsArray == null)
         {
-            function = PDFunction.create(functionsArray.get(0));
+            COSArray ar = getFunctions();
+            functionsArray = new PDFunction[ar.size()];
+            for (int i = 0; i < ar.size(); ++i)
+            {
+                functionsArray[i] = PDFunction.create(ar.getObject(i));
+            }            
+        }
+
+        if (functionsArray.length == 1) 
+        {
+            // This doesn't make sense but it may happen ...
+            function = functionsArray[0];
             PDRange encRange = getEncodeForParameter(0);
             x = interpolate(x, domain.getMin(), domain.getMax(), encRange.getMin(), encRange.getMax());
         }
@@ -95,7 +103,7 @@ public class PDFunctionType3 extends PDFunction
                 if ( x >= partitionValues[i] && 
                         (x < partitionValues[i+1] || (i == partitionValuesSize - 2 && x == partitionValues[i+1])))
                 {
-                    function = PDFunction.create(functionsArray.get(i));
+                    function = functionsArray[i];
                     PDRange encRange = getEncodeForParameter(i);
                     x = interpolate(x, partitionValues[i], partitionValues[i+1], encRange.getMin(), encRange.getMax());
                     break;
@@ -122,7 +130,7 @@ public class PDFunctionType3 extends PDFunction
     {
         if (functions == null)
         {
-            functions = (COSArray)(getDictionary().getDictionaryObject( COSName.FUNCTIONS ));
+            functions = (COSArray)(getCOSObject().getDictionaryObject( COSName.FUNCTIONS ));
         }
         return functions;
     }
@@ -136,7 +144,7 @@ public class PDFunctionType3 extends PDFunction
     {
         if (bounds == null) 
         {
-            bounds = (COSArray)(getDictionary().getDictionaryObject( COSName.BOUNDS ));
+            bounds = (COSArray)(getCOSObject().getDictionaryObject( COSName.BOUNDS ));
         }
         return bounds;
     }
@@ -150,7 +158,7 @@ public class PDFunctionType3 extends PDFunction
     {
         if (encode == null)
         {
-            encode = (COSArray)(getDictionary().getDictionaryObject( COSName.ENCODE ));
+            encode = (COSArray)(getCOSObject().getDictionaryObject( COSName.ENCODE ));
         }
         return encode;
     }
@@ -158,7 +166,7 @@ public class PDFunctionType3 extends PDFunction
     /**
      * Get the encode for the input parameter.
      *
-     * @param paramNum The function parameter number.
+     * @param n The function parameter number.
      *
      * @return The encode parameter range or null if none is set.
      */

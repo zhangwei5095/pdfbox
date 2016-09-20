@@ -21,6 +21,7 @@ import java.io.IOException;
 import org.apache.pdfbox.cos.COSBase;
 import org.apache.pdfbox.cos.COSDictionary;
 import org.apache.pdfbox.cos.COSName;
+import org.apache.pdfbox.cos.COSStream;
 import org.apache.pdfbox.pdmodel.common.COSObjectable;
 import org.apache.pdfbox.pdmodel.graphics.PDXObject;
 import org.apache.pdfbox.pdmodel.interactive.annotation.PDAnnotation;
@@ -39,14 +40,15 @@ public class PDObjectReference implements COSObjectable
      */
     public static final String TYPE = "OBJR";
 
-    private COSDictionary dictionary;
+    private final COSDictionary dictionary;
 
     /**
      * Returns the underlying dictionary.
      * 
      * @return the dictionary
      */
-    protected COSDictionary getCOSDictionary()
+    @Override
+    public COSDictionary getCOSObject()
     {
         return this.dictionary;
     }
@@ -72,15 +74,6 @@ public class PDObjectReference implements COSObjectable
     }
 
     /**
-     * {@inheritDoc}
-     */
-    @Override
-    public COSBase getCOSObject()
-    {
-        return this.dictionary;
-    }
-
-    /**
      * Gets a higher-level object for the referenced object.
      * Currently this method may return a {@link PDAnnotation},
      * a {@link PDXObject} or <code>null</code>.
@@ -89,17 +82,20 @@ public class PDObjectReference implements COSObjectable
      */
     public COSObjectable getReferencedObject()
     {
-        COSBase obj = this.getCOSDictionary().getDictionaryObject(COSName.OBJ);
+        COSBase obj = this.getCOSObject().getDictionaryObject(COSName.OBJ);
         if (!(obj instanceof COSDictionary))
         {
             return null;
         }
         try
         {
-            PDXObject xobject = PDXObject.createXObject(obj, null, null); // <-- TODO: valid?
-            if (xobject != null)
+            if (obj instanceof COSStream)
             {
-                return xobject;
+                PDXObject xobject = PDXObject.createXObject(obj, null); // <-- TODO: valid?
+                if (xobject != null)
+                {
+                    return xobject;
+                }
             }
             COSDictionary objDictionary  = (COSDictionary)obj;
             PDAnnotation annotation = PDAnnotation.createAnnotation(obj);
@@ -129,7 +125,7 @@ public class PDObjectReference implements COSObjectable
      */
     public void setReferencedObject(PDAnnotation annotation)
     {
-        this.getCOSDictionary().setItem(COSName.OBJ, annotation);
+        this.getCOSObject().setItem(COSName.OBJ, annotation);
     }
 
     /**
@@ -139,7 +135,7 @@ public class PDObjectReference implements COSObjectable
      */
     public void setReferencedObject(PDXObject xobject)
     {
-        this.getCOSDictionary().setItem(COSName.OBJ, xobject);
+        this.getCOSObject().setItem(COSName.OBJ, xobject);
     }
 
 }

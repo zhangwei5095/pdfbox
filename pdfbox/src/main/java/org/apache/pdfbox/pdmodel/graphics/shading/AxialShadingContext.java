@@ -20,12 +20,10 @@ import java.awt.PaintContext;
 import java.awt.Rectangle;
 import java.awt.geom.AffineTransform;
 import java.awt.geom.NoninvertibleTransformException;
-import java.awt.geom.Point2D;
 import java.awt.image.ColorModel;
 import java.awt.image.Raster;
 import java.awt.image.WritableRaster;
 import java.io.IOException;
-
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.pdfbox.cos.COSArray;
@@ -52,7 +50,7 @@ public class AxialShadingContext extends ShadingContext implements PaintContext
     private final double x1x0;
     private final double y1y0;
     private final float d1d0;
-    private double denom;
+    private final double denom;
 
     private final int factor;
     private final int[] colorTable;
@@ -66,13 +64,13 @@ public class AxialShadingContext extends ShadingContext implements PaintContext
      * @param colorModel the color model to be used
      * @param xform transformation for user to device space
      * @param matrix the pattern matrix concatenated with that of the parent content stream
-     * @param deviceBounds device bounds
-     * @throws java.io.IOException if there is an error getting the color space or doing color conversion.
+     * @param deviceBounds the bounds of the area to paint, in device units
+     * @throws IOException if there is an error getting the color space or doing color conversion.
      */
     public AxialShadingContext(PDShadingType2 shading, ColorModel colorModel, AffineTransform xform,
                                Matrix matrix, Rectangle deviceBounds) throws IOException
     {
-        super(shading, colorModel, xform, matrix, deviceBounds);
+        super(shading, colorModel, xform, matrix);
         this.axialShadingType = shading;
         coords = shading.getCoords().toFloatArray();
 
@@ -88,11 +86,11 @@ public class AxialShadingContext extends ShadingContext implements PaintContext
         }
         // extend values
         COSArray extendValues = shading.getExtend();
-        if (shading.getExtend() != null)
+        if (extendValues != null)
         {
             extend = new boolean[2];
-            extend[0] = ((COSBoolean) extendValues.get(0)).getValue();
-            extend[1] = ((COSBoolean) extendValues.get(1)).getValue();
+            extend[0] = ((COSBoolean) extendValues.getObject(0)).getValue();
+            extend[1] = ((COSBoolean) extendValues.getObject(1)).getValue();
         }
         else
         {
@@ -104,7 +102,6 @@ public class AxialShadingContext extends ShadingContext implements PaintContext
         y1y0 = coords[3] - coords[1];
         d1d0 = domain[1] - domain[0];
         denom = Math.pow(x1x0, 2) + Math.pow(y1y0, 2);
-        double longestDistance = Math.sqrt(denom);
 
         try
         {
@@ -118,20 +115,25 @@ public class AxialShadingContext extends ShadingContext implements PaintContext
             LOG.error(ex, ex);
         }
 
-        // transform the distance to actual pixel space
-        // use transform, because xform.getScaleX() does not return correct scaling on 90° rotated matrix
-        Point2D point = new Point2D.Double(longestDistance, longestDistance);
-        matrix.transform(point);
-        xform.transform(point, point);
-        factor = (int) Math.max(Math.abs(point.getX()), Math.abs(point.getY()));
+        // shading space -> device space
+        AffineTransform shadingToDevice = (AffineTransform)xform.clone();
+        shadingToDevice.concatenate(matrix.createAffineTransform());
+
+        // worst case for the number of steps is opposite diagonal corners, so use that
+        double dist = Math.sqrt(Math.pow(deviceBounds.getMaxX() - deviceBounds.getMinX(), 2) +
+                                Math.pow(deviceBounds.getMaxY() - deviceBounds.getMinY(), 2));
+        factor = (int) Math.ceil(dist);
+        
+        // build the color table for the given number of steps
         colorTable = calcColorTable();
     }
-
+    
     /**
      * Calculate the color on the axial line and store them in an array.
      *
      * @return an array, index denotes the relative position, the corresponding
      * value is the color on the axial line
+     * @throws IOException if the color conversion fails.
      */
     private int[] calcColorTable() throws IOException
     {
@@ -145,7 +147,7 @@ public class AxialShadingContext extends ShadingContext implements PaintContext
         {
             for (int i = 0; i <= factor; i++)
             {
-                float t = domain[0] + d1d0 * i / (float) factor;
+                float t = domain[0] + d1d0 * i / factor;
                 float[] values = axialShadingType.evalFunction(t);
                 map[i] = convertToRGB(values);
             }
@@ -156,15 +158,14 @@ public class AxialShadingContext extends ShadingContext implements PaintContext
     @Override
     public void dispose()
     {
-        outputColorModel = null;
-        shadingColorSpace = null;
+        super.dispose();
         axialShadingType = null;
     }
 
     @Override
     public ColorModel getColorModel()
     {
-        return outputColorModel;
+        return super.getColorModel();
     }
 
     @Override
@@ -193,12 +194,11 @@ public class AxialShadingContext extends ShadingContext implements PaintContext
                 rat.transform(values, 0, values, 0, 1);
                 currentX = values[0];
                 currentY = values[1];
-                double inputValue = x1x0 * (currentX - coords[0]);
-                inputValue += y1y0 * (currentY - coords[1]);
+                double inputValue = x1x0 * (currentX - coords[0]) + y1y0 * (currentY - coords[1]);
                 // TODO this happens if start == end, see PDFBOX-1442
                 if (denom == 0)
                 {
-                    if (background == null)
+                    if (getBackground() == null)
                     {
                         continue;
                     }
@@ -218,7 +218,7 @@ public class AxialShadingContext extends ShadingContext implements PaintContext
                     }
                     else
                     {
-                        if (background == null)
+                        if (getBackground() == null)
                         {
                             continue;
                         }
@@ -235,7 +235,7 @@ public class AxialShadingContext extends ShadingContext implements PaintContext
                     }
                     else
                     {
-                        if (background == null)
+                        if (getBackground() == null)
                         {
                             continue;
                         }
@@ -246,7 +246,7 @@ public class AxialShadingContext extends ShadingContext implements PaintContext
                 if (useBackground)
                 {
                     // use the given backgound color values
-                    value = rgbBackground;
+                    value = getRgbBackground();
                 }
                 else
                 {
@@ -292,6 +292,8 @@ public class AxialShadingContext extends ShadingContext implements PaintContext
 
     /**
      * Returns the function.
+     *
+     * @throws java.io.IOException if we were not able to create the function.
      */
     public PDFunction getFunction() throws IOException
     {

@@ -18,6 +18,7 @@ package org.apache.pdfbox.examples.pdmodel;
 
 import java.awt.geom.Rectangle2D;
 import java.io.File;
+import java.io.IOException;
 import java.util.List;
 
 import org.apache.pdfbox.pdmodel.PDDocument;
@@ -35,7 +36,7 @@ import org.apache.pdfbox.text.PDFTextStripperByArea;
  *
  * @author Ben Litchfield
  */
-public class PrintURLs
+public final class PrintURLs
 {
     /**
      * Constructor.
@@ -47,14 +48,14 @@ public class PrintURLs
 
     /**
      * This will create a hello world PDF document.
-     * <br />
+     * <br>
      * see usage() for commandline
      *
      * @param args Command line arguments.
      *
-     * @throws Exception If there is an error extracting the URLs.
+     * @throws IOException If there is an error extracting the URLs.
      */
-    public static void main(String[] args) throws Exception
+    public static void main(String[] args) throws IOException
     {
         PDDocument doc = null;
         try
@@ -75,7 +76,7 @@ public class PrintURLs
                     //first setup text extraction regions
                     for( int j=0; j<annotations.size(); j++ )
                     {
-                        PDAnnotation annot = (PDAnnotation)annotations.get( j );
+                        PDAnnotation annot = annotations.get(j);
                         if( annot instanceof PDAnnotationLink )
                         {
                             PDAnnotationLink link = (PDAnnotationLink)annot;
@@ -105,7 +106,7 @@ public class PrintURLs
 
                     for( int j=0; j<annotations.size(); j++ )
                     {
-                        PDAnnotation annot = (PDAnnotation)annotations.get( j );
+                        PDAnnotation annot = annotations.get(j);
                         if( annot instanceof PDAnnotationLink )
                         {
                             PDAnnotationLink link = (PDAnnotationLink)annot;

@@ -155,7 +155,7 @@ public class OS2WindowsMetricsTable extends TTFTable
     public static final short FSTYPE_RESTRICTED = 0x0001;
 
     /**
-     * Preview & Print embedding: the font may be embedded, and temporarily loaded on the
+     * Preview and Print embedding: the font may be embedded, and temporarily loaded on the
      * remote system. No edits can be applied to the document.
      */
     public static final short FSTYPE_PREVIEW_AND_PRINT = 0x0004;
@@ -176,6 +176,11 @@ public class OS2WindowsMetricsTable extends TTFTable
      * may be embedded. Other embedding restrictions specified in bits 0-3 and 8 also apply.
      */
     public static final short FSTYPE_BITMAP_ONLY = 0x0200;
+
+    OS2WindowsMetricsTable(TrueTypeFont font)
+    {
+        super(font);
+    }
 
     /**
      * @return Returns the achVendId.
@@ -256,23 +261,7 @@ public class OS2WindowsMetricsTable extends TTFTable
     {
         this.familyClass = familyClassValue;
     }
-
-    /**
-     * @return Returns the familySubClass.
-     */
-    public int getFamilySubClass()
-    {
-        return familySubClass;
-    }
-
-    /**
-     * @param familySubClassValue The familySubClass to set.
-     */
-    public void setFamilySubClass(int familySubClassValue)
-    {
-        this.familySubClass = familySubClassValue;
-    }
-
+    
     /**
      * @return Returns the firstCharIndex.
      */
@@ -761,7 +750,6 @@ public class OS2WindowsMetricsTable extends TTFTable
     private short strikeoutSize;
     private short strikeoutPosition;
     private int familyClass;
-    private int familySubClass;
     private byte[] panose = new byte[10];
     private long unicodeRange1;
     private long unicodeRange2;
@@ -813,8 +801,7 @@ public class OS2WindowsMetricsTable extends TTFTable
         superscriptYOffset = data.readSignedShort();
         strikeoutSize = data.readSignedShort();
         strikeoutPosition = data.readSignedShort();
-        familyClass = data.readUnsignedByte();
-        familySubClass = data.readUnsignedByte();
+        familyClass = data.readSignedShort();
         panose = data.read(10);
         unicodeRange1 = data.readUnsignedInt();
         unicodeRange2 = data.readUnsignedInt();

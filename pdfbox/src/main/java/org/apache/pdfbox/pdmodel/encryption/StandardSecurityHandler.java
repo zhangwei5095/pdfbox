@@ -99,7 +99,7 @@ public final class StandardSecurityHandler extends SecurityHandler
     /**
      * Computes the version number of the StandardSecurityHandler
      * regarding the encryption key length.
-     * See PDF Spec 1.6 p 93
+     * See PDF Spec 1.6 p 93 and PDF 1.7 AEL3
      *
      * @return The computed version number.
      */
@@ -109,7 +109,11 @@ public final class StandardSecurityHandler extends SecurityHandler
         {
             return DEFAULT_VERSION;
         }
-        else if(keyLength == 256)
+        else if (keyLength == 128 && policy.isPreferAES())
+        {
+            return 4;
+        }
+        else if (keyLength == 256)
         {
             return 5;
         }
@@ -121,10 +125,12 @@ public final class StandardSecurityHandler extends SecurityHandler
      * Computes the revision version of the StandardSecurityHandler to
      * use regarding the version number and the permissions bits set.
      * See PDF Spec 1.6 p98
+     * 
+     * @param version The version number.
      *
      * @return The computed revision number.
      */
-    private int computeRevisionNumber()
+    private int computeRevisionNumber(int version)
     {
         if(version < 2 && !policy.getPermissions().hasAnyRevision3PermissionSet())
         {
@@ -134,6 +140,10 @@ public final class StandardSecurityHandler extends SecurityHandler
         {
             // note about revision 5: "Shall not be used. This value was used by a deprecated Adobe extension."
             return 6;    
+        }
+        if (version == 4)
+        {
+            return 4;
         }
         if ( version == 2 || version == 3 || policy.getPermissions().hasAnyRevision3PermissionSet())
         {
@@ -162,8 +172,7 @@ public final class StandardSecurityHandler extends SecurityHandler
         {
             throw new IOException("Decryption material is not compatible with the document");
         }
-        decryptMetadata = encryption.isEncryptMetaData();
-
+        setDecryptMetadata(encryption.isEncryptMetaData());
         StandardDecryptionMaterial material = (StandardDecryptionMaterial)decryptionMaterial;
 
         String password = material.getPassword();
@@ -192,12 +201,15 @@ public final class StandardSecurityHandler extends SecurityHandler
             ue = encryption.getUserEncryptionKey();
             oe = encryption.getOwnerEncryptionKey();
         }
+        
+        AccessPermission currentAccessPermission;
 
         if( isOwnerPassword(password.getBytes(passwordCharset), userKey, ownerKey,
                                  dicPermissions, documentIDBytes, dicRevision,
                                  dicLength, encryptMetadata) )
         {
             currentAccessPermission = AccessPermission.getOwnerAccessPermission();
+            setCurrentAccessPermission(currentAccessPermission);
             
             byte[] computedPassword;
             if (dicRevision == 6 || dicRevision == 5)
@@ -224,7 +236,10 @@ public final class StandardSecurityHandler extends SecurityHandler
                            dicPermissions, documentIDBytes, dicRevision,
                            dicLength, encryptMetadata) )
         {
-            currentAccessPermission = new AccessPermission( dicPermissions );
+            currentAccessPermission = new AccessPermission(dicPermissions);
+            currentAccessPermission.setReadOnly();
+            setCurrentAccessPermission(currentAccessPermission);
+            
             encryptionKey =
                 computeEncryptedKey(
                     password.getBytes(passwordCharset),
@@ -245,17 +260,18 @@ public final class StandardSecurityHandler extends SecurityHandler
             validatePerms(encryption, dicPermissions, encryptMetadata);
         }
 
-        // detect whether AES encryption is used. This assumes that the encryption algo is 
-        // stored in the PDCryptFilterDictionary
-        PDCryptFilterDictionary stdCryptFilterDictionary = encryption.getStdCryptFilterDictionary();
-
-        if (stdCryptFilterDictionary != null)
+        if (encryption.getVersion() == 4 || encryption.getVersion() == 5)
         {
-            COSName cryptFilterMethod = stdCryptFilterDictionary.getCryptFilterMethod();
-            if (cryptFilterMethod != null) 
+            // detect whether AES encryption is used. This assumes that the encryption algo is 
+            // stored in the PDCryptFilterDictionary
+            // However, crypt filters are used only when V is 4 or 5.
+            PDCryptFilterDictionary stdCryptFilterDictionary = encryption.getStdCryptFilterDictionary();
+
+            if (stdCryptFilterDictionary != null)
             {
-                setAES("AESV2".equalsIgnoreCase(cryptFilterMethod.getName()) ||
-                       "AESV3".equalsIgnoreCase(cryptFilterMethod.getName()));
+                COSName cryptFilterMethod = stdCryptFilterDictionary.getCryptFilterMethod();
+                setAES(COSName.AESV2.equals(cryptFilterMethod) || 
+                       COSName.AESV3.equals(cryptFilterMethod));
             }
         }
     }
@@ -278,26 +294,32 @@ public final class StandardSecurityHandler extends SecurityHandler
     }
 
     // Algorithm 13: validate permissions ("Perms" field). Relaxed to accomodate buggy encoders
+    // https://www.adobe.com/content/dam/Adobe/en/devnet/acrobat/pdfs/adobe_supplement_iso32000.pdf
     private void validatePerms(PDEncryption encryption, int dicPermissions, boolean encryptMetadata) throws IOException
     {
         try
         {
+            // "Decrypt the 16-byte Perms string using AES-256 in ECB mode with an 
+            // initialization vector of zero and the file encryption key as the key."
             Cipher cipher = Cipher.getInstance("AES/ECB/NoPadding");
             cipher.init(Cipher.DECRYPT_MODE, new SecretKeySpec(encryptionKey, "AES"));
             byte[] perms = cipher.doFinal(encryption.getPerms());
             
+            // "Verify that bytes 9-11 of the result are the characters ‘a’, ‘d’, ‘b’."
             if (perms[9] != 'a' || perms[10] != 'd' || perms[11] != 'b')
             {
                 LOG.warn("Verification of permissions failed (constant)");
             }
             
-            int permsP = perms[0] & 0xFF | perms[1] & 0xFF << 8 | perms[2] & 0xFF << 16 |
-                    perms[3] & 0xFF << 24;
+            // "Bytes 0-3 of the decrypted Perms entry, treated as a little-endian integer, 
+            // are the user permissions. They should match the value in the P key."
+            int permsP = perms[0] & 0xFF | (perms[1] & 0xFF) << 8 | (perms[2] & 0xFF) << 16 |
+                    (perms[3] & 0xFF) << 24;
             
             if (permsP != dicPermissions)
             {
-                LOG.warn("Verification of permissions failed (" + permsP +
-                        " != " + dicPermissions + ")");
+                LOG.warn("Verification of permissions failed (" + String.format("%08X",permsP) +
+                        " != " + String.format("%08X",dicPermissions) + ")");
             }
             
             if (encryptMetadata && perms[8] != 'T' || !encryptMetadata && perms[8] != 'F')
@@ -315,23 +337,27 @@ public final class StandardSecurityHandler extends SecurityHandler
     /**
      * Prepare document for encryption.
      *
-     * @param doc The documeent to encrypt.
+     * @param document The documeent to encrypt.
      *
      * @throws IOException If there is an error accessing data.
      */
     @Override
-    public void prepareDocumentForEncryption(PDDocument doc) throws IOException
+    public void prepareDocumentForEncryption(PDDocument document) throws IOException
     {
-        document = doc;
         PDEncryption encryptionDictionary = document.getEncryption();
         if(encryptionDictionary == null)
         {
             encryptionDictionary = new PDEncryption();
         }
-        version = computeVersionNumber();
-        int revision = computeRevisionNumber();
+        int version = computeVersionNumber();
+        int revision = computeRevisionNumber(version);
         encryptionDictionary.setFilter(FILTER);
         encryptionDictionary.setVersion(version);
+        if (version != 4 && version != 5)
+        {
+            // remove CF, StmF, and StrF entries that may be left from a previous encryption
+            encryptionDictionary.removeV45filters();
+        }
         encryptionDictionary.setRevision(revision);
         encryptionDictionary.setLength(keyLength);
 
@@ -364,8 +390,8 @@ public final class StandardSecurityHandler extends SecurityHandler
         }
         else
         {
-            prepareEncryptionDictRev2345(ownerPassword, userPassword, encryptionDictionary, permissionInt, 
-                    revision, length);
+            prepareEncryptionDictRev2345(ownerPassword, userPassword, encryptionDictionary, permissionInt,
+                    document, revision, length);
         }
 
         document.setEncryptionDictionary( encryptionDictionary );
@@ -425,13 +451,7 @@ public final class StandardSecurityHandler extends SecurityHandler
             encryptionDictionary.setOwnerKey(o);
             encryptionDictionary.setOwnerEncryptionKey(oe);
 
-            PDCryptFilterDictionary cryptFilterDictionary = new PDCryptFilterDictionary();
-            cryptFilterDictionary.setCryptFilterMethod(COSName.AESV3);
-            cryptFilterDictionary.setLength(keyLength);
-            encryptionDictionary.setStdCryptFilterDictionary(cryptFilterDictionary);
-            encryptionDictionary.setStreamFilterName(COSName.STD_CF);
-            encryptionDictionary.setStringFilterName(COSName.STD_CF);
-            setAES(true);
+            prepareEncryptionDictAES(encryptionDictionary, COSName.AESV3);
 
             // Algorithm 10: compute "Perms" value
             byte[] perms = new byte[16];
@@ -467,7 +487,8 @@ public final class StandardSecurityHandler extends SecurityHandler
     }
 
     private void prepareEncryptionDictRev2345(String ownerPassword, String userPassword,
-            PDEncryption encryptionDictionary, int permissionInt, int revision, int length)
+            PDEncryption encryptionDictionary, int permissionInt, PDDocument document, 
+            int revision, int length)
             throws IOException
     {
         COSArray idArray = document.getDocument().getDocumentID();
@@ -480,7 +501,7 @@ public final class StandardSecurityHandler extends SecurityHandler
             md.update(time.toByteArray());
             md.update(ownerPassword.getBytes(Charsets.ISO_8859_1));
             md.update(userPassword.getBytes(Charsets.ISO_8859_1));
-            md.update(document.getDocument().toString().getBytes());
+            md.update(document.getDocument().toString().getBytes(Charsets.ISO_8859_1));
 
             byte[] id = md.digest(this.toString().getBytes(Charsets.ISO_8859_1));
             COSString idString = new COSString(id);
@@ -506,6 +527,22 @@ public final class StandardSecurityHandler extends SecurityHandler
 
         encryptionDictionary.setOwnerKey(ownerBytes);
         encryptionDictionary.setUserKey(userBytes);
+        
+        if (revision == 4)
+        {
+            prepareEncryptionDictAES(encryptionDictionary, COSName.AESV2);
+        }
+    }
+
+    private void prepareEncryptionDictAES(PDEncryption encryptionDictionary, COSName aesVName)
+    {
+        PDCryptFilterDictionary cryptFilterDictionary = new PDCryptFilterDictionary();
+        cryptFilterDictionary.setCryptFilterMethod(aesVName);
+        cryptFilterDictionary.setLength(keyLength);
+        encryptionDictionary.setStdCryptFilterDictionary(cryptFilterDictionary);
+        encryptionDictionary.setStreamFilterName(COSName.STD_CF);
+        encryptionDictionary.setStringFilterName(COSName.STD_CF);
+        setAES(true);
     }
 
     /**
@@ -577,8 +614,7 @@ public final class StandardSecurityHandler extends SecurityHandler
 
         if( encRevision == 2 )
         {
-            rc4.setKey( rc4Key );
-            rc4.write( owner, result );
+            encryptDataRC4(rc4Key, owner, result);
         }
         else if( encRevision == 3 || encRevision == 4)
         {
@@ -593,9 +629,8 @@ public final class StandardSecurityHandler extends SecurityHandler
                 {
                     iterationKey[j] = (byte)(iterationKey[j] ^ (byte)i);
                 }
-                rc4.setKey( iterationKey );
                 result.reset();
-                rc4.write( otemp, result );
+                encryptDataRC4(iterationKey, otemp, result);
                 otemp = result.toByteArray();
             }
         }
@@ -755,8 +790,7 @@ public final class StandardSecurityHandler extends SecurityHandler
         
         if( encRevision == 2 )
         {
-            rc4.setKey( encKey );
-            rc4.write( ENCRYPT_PADDING, result );
+            encryptDataRC4(encKey, ENCRYPT_PADDING, result );
         }
         else if( encRevision == 3 || encRevision == 4 )
         {
@@ -774,10 +808,9 @@ public final class StandardSecurityHandler extends SecurityHandler
                 {
                     iterationKey[j] = (byte)(iterationKey[j] ^ i);
                 }
-                rc4.setKey( iterationKey );
-                ByteArrayInputStream input = new ByteArrayInputStream( result.toByteArray() );
+                ByteArrayInputStream input = new ByteArrayInputStream(result.toByteArray());
                 result.reset();
-                rc4.write( input, result );
+                encryptDataRC4(iterationKey, input, result);
             }
 
             byte[] finalResult = new byte[32];
@@ -812,9 +845,8 @@ public final class StandardSecurityHandler extends SecurityHandler
         byte[] rc4Key = computeRC4key(ownerPassword, encRevision, length);
         byte[] paddedUser = truncateOrPad( userPassword );
 
-        rc4.setKey( rc4Key );
         ByteArrayOutputStream encrypted = new ByteArrayOutputStream();
-        rc4.write( new ByteArrayInputStream( paddedUser ), encrypted );
+        encryptDataRC4(rc4Key, new ByteArrayInputStream(paddedUser), encrypted);
 
         if( encRevision == 3 || encRevision == 4 )
         {
@@ -826,10 +858,9 @@ public final class StandardSecurityHandler extends SecurityHandler
                 {
                     iterationKey[j] = (byte)(iterationKey[j] ^ (byte)i);
                 }
-                rc4.setKey( iterationKey );
                 ByteArrayInputStream input = new ByteArrayInputStream( encrypted.toByteArray() );
                 encrypted.reset();
-                rc4.write( input, encrypted );
+                encryptDataRC4(iterationKey, input, encrypted );
             }
         }
 
@@ -1152,4 +1183,12 @@ public final class StandardSecurityHandler extends SecurityHandler
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
+    @Override
+    public boolean hasProtectionPolicy()
+    {
+        return policy != null;
+    }
 }

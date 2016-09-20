@@ -34,7 +34,12 @@ public class HorizontalMetricsTable extends TTFTable
     private short[] leftSideBearing;
     private short[] nonHorizontalLeftSideBearing;
     private int numHMetrics;
-    
+
+    HorizontalMetricsTable(TrueTypeFont font)
+    {
+        super(font);
+    }
+
     /**
      * This will read the required data from the stream.
      * 
@@ -100,4 +105,21 @@ public class HorizontalMetricsTable extends TTFTable
             return advanceWidth[advanceWidth.length -1];
         }
     }
+    
+    /**
+     * Returns the left side bearing for the given GID.
+     *
+     * @param gid GID
+     */
+    public int getLeftSideBearing(int gid)
+    {
+        if (gid < numHMetrics)
+        {
+            return leftSideBearing[gid];
+        }
+        else
+        {
+            return nonHorizontalLeftSideBearing[gid - numHMetrics];
+        }
+   }
 }

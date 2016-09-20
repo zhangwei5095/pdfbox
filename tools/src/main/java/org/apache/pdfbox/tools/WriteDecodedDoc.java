@@ -18,14 +18,13 @@ package org.apache.pdfbox.tools;
 
 import java.io.File;
 import java.io.IOException;
-
-import java.util.Iterator;
-
+import java.io.OutputStream;
 import org.apache.pdfbox.cos.COSBase;
+import org.apache.pdfbox.cos.COSName;
 import org.apache.pdfbox.cos.COSObject;
 import org.apache.pdfbox.cos.COSStream;
-
 import org.apache.pdfbox.pdmodel.PDDocument;
+import org.apache.pdfbox.pdmodel.common.PDStream;
 
 /**
  * load document and write with all streams decoded.
@@ -62,15 +61,17 @@ public class WriteDecodedDoc
         {
             doc = PDDocument.load(new File(in), password);
             doc.setAllSecurityToBeRemoved(true);
-            for (Iterator<COSObject> i = doc.getDocument().getObjects().iterator(); i.hasNext();)
+            for (COSObject cosObject : doc.getDocument().getObjects())
             {
-                COSBase base = ((COSObject) i.next()).getObject();
+                COSBase base = cosObject.getObject();
                 if (base instanceof COSStream)
                 {
-                    // just kill the filters
-                    COSStream cosStream = (COSStream)base;
-                    cosStream.getUnfilteredStream();
-                    cosStream.setFilters(null);
+                    COSStream stream = (COSStream)base;
+                    byte[] bytes = new PDStream(stream).toByteArray();
+                    stream.removeItem(COSName.FILTER);
+                    OutputStream streamOut = stream.createOutputStream();
+                    streamOut.write(bytes);
+                    streamOut.close();
                 }
             }
             doc.getDocumentCatalog();
@@ -87,10 +88,11 @@ public class WriteDecodedDoc
 
     /**
      * This will write a PDF document with completely decoded streams.
-     * <br />
+     * <br>
      * see usage() for commandline
      *
      * @param args command line arguments
+     * @throws java.io.IOException if the output could not be written
      */
     public static void main(String[] args) throws IOException
     {
@@ -158,11 +160,13 @@ public class WriteDecodedDoc
      */
     private static void usage()
     {
-        System.err.println(
-                "usage: java -jar pdfbox-app-x.y.z.jar WriteDecodedDoc [OPTIONS] <input-file> [output-file]\n" +
-                "  -password <password>      Password to decrypt the document\n" +
-                "  <input-file>              The PDF document to be decompressed\n" +
-                "  [output-file]             The filename for the decompressed pdf\n"
-                );
+        String message = "Usage: java -jar pdfbox-app-x.y.z.jar WriteDecodedDoc [options] <inputfile> [outputfile]\n"
+                + "\nOptions:\n"
+                + "  -password <password> : Password to decrypt the document\n"
+                + "  <inputfile>          : The PDF document to be decompressed\n"
+                + "  [outputfile]         : The filename for the decompressed pdf\n";
+       
+        System.err.println(message);
+        System.exit(1);
     }
 }

@@ -16,26 +16,23 @@
  */
 package org.apache.pdfbox.cos;
 
-import java.io.BufferedInputStream;
-import java.io.BufferedOutputStream;
-import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.Closeable;
-import java.io.File;
+import java.io.FilterOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
-
+import java.util.ArrayList;
+import java.util.List;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
-import org.apache.pdfbox.filter.DecodeResult;
 import org.apache.pdfbox.filter.Filter;
 import org.apache.pdfbox.filter.FilterFactory;
 import org.apache.pdfbox.io.IOUtils;
 import org.apache.pdfbox.io.RandomAccess;
-import org.apache.pdfbox.io.RandomAccessBuffer;
-import org.apache.pdfbox.io.RandomAccessFile;
-import org.apache.pdfbox.io.RandomAccessFileInputStream;
-import org.apache.pdfbox.io.RandomAccessFileOutputStream;
+import org.apache.pdfbox.io.RandomAccessInputStream;
+import org.apache.pdfbox.io.RandomAccessOutputStream;
+import org.apache.pdfbox.io.ScratchFile;
 
 /**
  * This class represents a stream object in a PDF document.
@@ -44,108 +41,41 @@ import org.apache.pdfbox.io.RandomAccessFileOutputStream;
  */
 public class COSStream extends COSDictionary implements Closeable
 {
-    /**
-     * Log instance.
-     */
+    private RandomAccess randomAccess;      // backing store, in-memory or on-disk
+    private final ScratchFile scratchFile;  // used as a temp buffer during decoding
+    private boolean isWriting;              // true if there's an open OutputStream
+    
     private static final Log LOG = LogFactory.getLog(COSStream.class);
-
-    private static final int BUFFER_SIZE=16384;
-
-    /**
-     * internal buffer, either held in memory or within a scratch file.
-     */
-    private final RandomAccess buffer;
-    /**
-     * The stream with all of the filters applied.
-     */
-    private RandomAccessFileOutputStream filteredStream;
-
-    /**
-     * The stream with no filters, this contains the useful data.
-     */
-    private RandomAccessFileOutputStream unFilteredStream;
-    private DecodeResult decodeResult;
-
-    private File scratchFile;
     
     /**
-     * Constructor.  Creates a new stream with an empty dictionary.
-     *
+     * Creates a new stream with an empty dictionary.
      */
-    public COSStream( )
+    public COSStream()
     {
-        this(false, null);
+        this(ScratchFile.getMainMemoryOnlyInstance());
     }
-
+    
     /**
-     * Constructor.
+     * Creates a new stream with an empty dictionary. Data is stored in the given scratch file.
      *
-     * @param dictionary The dictionary that is associated with this stream.
-     * 
+     * @param scratchFile Scratch file for writing stream data.
      */
-    public COSStream( COSDictionary dictionary )
-    {
-        this(dictionary, false, null);
-    }
-
-    /**
-     * Constructor.  Creates a new stream with an empty dictionary.
-     * 
-     * @param useScratchFiles enables the usage of a scratch file if set to true
-     * @param scratchDirectory directory to be used to create the scratch file. If null java.io.temp is used instead.
-     *     
-     */
-    public COSStream( boolean useScratchFiles, File scratchDirectory )
+    public COSStream(ScratchFile scratchFile)
     {
         super();
-        if (useScratchFiles)
-        {
-            buffer = createScratchFile(scratchDirectory);
-        }
-        else
-        {
-            buffer = new RandomAccessBuffer();
-        }
+        this.scratchFile = scratchFile != null ? scratchFile : ScratchFile.getMainMemoryOnlyInstance();
     }
-
+    
     /**
-     * Constructor.
-     *
-     * @param dictionary The dictionary that is associated with this stream.
-     * @param useScratchFiles enables the usage of a scratch file if set to true
-     * @param scratchDirectory directory to be used to create the scratch file. If null java.io.temp is used instead.
-     * 
+     * Throws if the random access backing store has been closed. Helpful for catching cases where
+     * a user tries to use a COSStream which has outlived its COSDocument.
      */
-    public COSStream( COSDictionary dictionary, boolean useScratchFiles, File scratchDirectory  )
+    private void checkClosed() throws IOException
     {
-        super( dictionary );
-        if (useScratchFiles)
+        if ((randomAccess != null) && randomAccess.isClosed())
         {
-            buffer = createScratchFile(scratchDirectory);
-        }
-        else
-        {
-            buffer = new RandomAccessBuffer();
-        }
-    }
-
-    /**
-     * Create a scratch file to be used as buffer to decrease memory foot print.
-     * 
-     * @param scratchDirectory directory to be used to create the scratch file. If null java.io.temp is used instead.
-     * 
-     */
-    private RandomAccess createScratchFile(File scratchDirectory)
-    {
-        try 
-        {
-            scratchFile = File.createTempFile("PDFBox", null, scratchDirectory);
-            return new RandomAccessFile(scratchFile, "rw");
-        }
-        catch (IOException exception)
-        {
-            LOG.error("Can't create temp file, using memory buffer instead", exception);
-            return new RandomAccessBuffer();
+            throw new IOException("COSStream has been closed and cannot be read. " +
+                                  "Perhaps its enclosing PDDocument has been closed?");
         }
     }
 
@@ -153,308 +83,236 @@ public class COSStream extends COSDictionary implements Closeable
      * This will get the stream with all of the filters applied.
      *
      * @return the bytes of the physical (encoded) stream
-     *
-     * @throws IOException when encoding/decoding causes an exception
+     * @throws IOException when encoding causes an exception
+     * @deprecated Use {@link #createRawInputStream()} instead.
      */
+    @Deprecated
     public InputStream getFilteredStream() throws IOException
     {
-        if (buffer.isClosed())
-        {
-            throw new IOException("COSStream has been closed and cannot be read. " +
-                                  "Perhaps its enclosing PDDocument has been closed?");
-        }
-
-        if( filteredStream == null )
-        {
-            doEncode();
-        }
-        long position = filteredStream.getPosition();
-        long length = filteredStream.getLengthWritten();
-
-        RandomAccessFileInputStream input =
-            new RandomAccessFileInputStream( buffer, position, length );
-        return new BufferedInputStream( input, BUFFER_SIZE );
+        return createRawInputStream();
     }
 
     /**
-     * This will get the length of the encoded stream.
+     * Ensures {@link #randomAccess} is not <code>null</code> by creating a
+     * buffer from {@link #scratchFile} if needed.
      * 
-     * @return the length of the encoded stream as long
-     *
-     * @throws IOException 
+     * @param forInputStream  if <code>true</code> and {@link #randomAccess} is <code>null</code>
+     *                        a debug message is logged - input stream should be retrieved after
+     *                        data being written to stream
+     * @throws IOException
      */
-    public long getFilteredLength() throws IOException
+    private void ensureRandomAccessExists(boolean forInputStream) throws IOException
     {
-        if (filteredStream == null)
+        if (randomAccess == null)
         {
-            doEncode();
+            if (forInputStream && LOG.isDebugEnabled())
+            {
+                // no data written to stream - maybe this should be an exception
+                LOG.debug("Create InputStream called without data being written before to stream.");
+            }
+            randomAccess = scratchFile.createBuffer();
         }
-        return filteredStream.getLength();
     }
     
+    /**
+     * Returns a new InputStream which reads the encoded PDF stream data. Experts only!
+     * 
+     * @return InputStream containing raw, encoded PDF stream data.
+     * @throws IOException If the stream could not be read.
+     */
+    public InputStream createRawInputStream() throws IOException
+    {
+        checkClosed();
+        if (isWriting)
+        {
+            throw new IllegalStateException("Cannot read while there is an open stream writer");
+        }
+        ensureRandomAccessExists(true);
+        return new RandomAccessInputStream(randomAccess);
+    }
+
     /**
      * This will get the logical content stream with none of the filters.
      *
      * @return the bytes of the logical (decoded) stream
-     *
-     * @throws IOException when encoding/decoding causes an exception
+     * @throws IOException when decoding causes an exception
+     * @deprecated Use {@link #createInputStream()} instead.
      */
+    @Deprecated
     public InputStream getUnfilteredStream() throws IOException
     {
-        if (buffer.isClosed())
-        {
-            throw new IOException("COSStream has been closed and cannot be read. " +
-                                "Perhaps its enclosing PDDocument has been closed?");
-        }
-
-        InputStream retval;
-        if( unFilteredStream == null )
-        {
-            doDecode();
-        }
-
-        //if unFilteredStream is still null then this stream has not been
-        //created yet, so we should return null.
-        if( unFilteredStream != null )
-        {
-            long position = unFilteredStream.getPosition();
-            long length = unFilteredStream.getLengthWritten();
-            RandomAccessFileInputStream input =
-                new RandomAccessFileInputStream( buffer, position, length );
-            retval = new BufferedInputStream( input, BUFFER_SIZE );
-        }
-        else
-        {
-
-            retval = new ByteArrayInputStream( new byte[0] );
-        }
-        return retval;
+        return createInputStream();
     }
 
     /**
-     * Returns the repaired stream parameters dictionary.
-     *
-     * @return the repaired stream parameters dictionary
-     * @throws IOException when encoding/decoding causes an exception
+     * Returns a new InputStream which reads the decoded stream data.
+     * 
+     * @return InputStream containing decoded stream data.
+     * @throws IOException If the stream could not be read.
      */
-    public DecodeResult getDecodeResult() throws IOException
+    public COSInputStream createInputStream() throws IOException
     {
-        if (unFilteredStream == null)
+        checkClosed();
+        if (isWriting)
         {
-            doDecode();
+            throw new IllegalStateException("Cannot read while there is an open stream writer");
         }
+        ensureRandomAccessExists(true);
+        InputStream input = new RandomAccessInputStream(randomAccess);
+        return COSInputStream.create(getFilterList(), this, input, scratchFile);
+    }
 
-        if (unFilteredStream == null || decodeResult == null)
+    /**
+     * This will create an output stream that can be written to.
+     *
+     * @return An output stream which raw data bytes should be written to.
+     * @throws IOException If there is an error creating the stream.
+     * @deprecated Use {@link #createOutputStream()} instead.
+     */
+    @Deprecated
+    public OutputStream createUnfilteredStream() throws IOException
+    {
+        return createOutputStream();
+    }
+
+    /**
+     * Returns a new OutputStream for writing stream data, using the current filters.
+     *
+     * @return OutputStream for un-encoded stream data.
+     * @throws IOException If the output stream could not be created.
+     */
+    public OutputStream createOutputStream() throws IOException
+    {
+        return createOutputStream(null);
+    }
+    
+    /**
+     * Returns a new OutputStream for writing stream data, using and the given filters.
+     * 
+     * @param filters COSArray or COSName of filters to be used.
+     * @return OutputStream for un-encoded stream data.
+     * @throws IOException If the output stream could not be created.
+     */
+    public OutputStream createOutputStream(COSBase filters) throws IOException
+    {
+        checkClosed();
+        if (isWriting)
         {
-            StringBuilder filterInfo = new StringBuilder();
-            COSBase filters = getFilters();
-            if (filters != null)
+            throw new IllegalStateException("Cannot have more than one open stream writer.");
+        }
+        // apply filters, if any
+        if (filters != null)
+        {
+            setItem(COSName.FILTER, filters);
+        }
+        randomAccess = scratchFile.createBuffer(); // discards old data - TODO: close existing buffer?
+        OutputStream randomOut = new RandomAccessOutputStream(randomAccess);
+        OutputStream cosOut = new COSOutputStream(getFilterList(), this, randomOut, scratchFile);
+        isWriting = true;
+        return new FilterOutputStream(cosOut)
+        {
+            @Override
+            public void write(byte[] b, int off, int len) throws IOException
             {
-                filterInfo.append(" - filter: ");
-                if (filters instanceof COSName)
-                {
-                    filterInfo.append(((COSName) filters).getName());
-                }
-                else if (filters instanceof COSArray)
-                {
-                    COSArray filterArray = (COSArray) filters;
-                    for (int i = 0; i < filterArray.size(); i++)
-                    {
-                        if (filterArray.size() > 1)
-                        {
-                            filterInfo.append(", ");
-                        }
-                        filterInfo.append(((COSName) filterArray.get(i)).getName());
-                    }
-                }
+                this.out.write(b, off, len);
             }
-            String subtype = getNameAsString(COSName.SUBTYPE);
-            throw new IOException(subtype + " stream was not read" + filterInfo);
-        }
-        return decodeResult;
+            
+            @Override
+            public void close() throws IOException
+            {
+                super.close();
+                setInt(COSName.LENGTH, (int)randomAccess.length());
+                isWriting = false;
+            }
+        };
     }
-
-    @Override
-    public Object accept(ICOSVisitor visitor) throws IOException
+    
+    /**
+     * This will create a new stream for which filtered byte should be
+     * written to. You probably don't want this but want to use the
+     * createUnfilteredStream, which is used to write raw bytes to.
+     *
+     * @return A stream that can be written to.
+     * @throws IOException If there is an error creating the stream.
+     * @deprecated Use {@link #createRawOutputStream()} instead.
+     */
+    @Deprecated
+    public OutputStream createFilteredStream() throws IOException
     {
-        return visitor.visitFromStream(this);
+        return createRawOutputStream();
     }
 
     /**
-     * This will decode the physical byte stream applying all of the filters to the stream.
-     *
-     * @throws IOException If there is an error applying a filter to the stream.
+     * Returns a new OutputStream for writing encoded PDF data. Experts only!
+     * 
+     * @return OutputStream for raw PDF stream data.
+     * @throws IOException If the output stream could not be created.
      */
-    private void doDecode() throws IOException
+    public OutputStream createRawOutputStream() throws IOException
     {
-// FIXME: We shouldn't keep the same reference?
-        unFilteredStream = filteredStream;
-
+        checkClosed();
+        if (isWriting)
+        {
+            throw new IllegalStateException("Cannot have more than one open stream writer.");
+        }
+        randomAccess = scratchFile.createBuffer(); // discards old data - TODO: close existing buffer?
+        OutputStream out = new RandomAccessOutputStream(randomAccess);
+        isWriting = true;
+        return new FilterOutputStream(out)
+        {
+            @Override
+            public void write(byte[] b, int off, int len) throws IOException
+            {
+                this.out.write(b, off, len);
+            }
+            
+            @Override
+            public void close() throws IOException
+            {
+                super.close();
+                setInt(COSName.LENGTH, (int)randomAccess.length());
+                isWriting = false;
+            }
+        };
+    }
+    
+    /**
+     * Returns the list of filters.
+     */
+    private List<Filter> getFilterList() throws IOException
+    {
+        List<Filter> filterList = new ArrayList<Filter>();
         COSBase filters = getFilters();
-        if( filters == null )
+        if (filters instanceof COSName)
         {
-            //then do nothing
-            decodeResult = DecodeResult.DEFAULT;
+            filterList.add(FilterFactory.INSTANCE.getFilter((COSName)filters));
         }
-        else if( filters instanceof COSName )
-        {
-            doDecode( (COSName)filters, 0 );
-        }
-        else if( filters instanceof COSArray )
+        else if (filters instanceof COSArray)
         {
             COSArray filterArray = (COSArray)filters;
-            for( int i=0; i<filterArray.size(); i++ )
+            for (int i = 0; i < filterArray.size(); i++)
             {
-                COSName filterName = (COSName)filterArray.get( i );
-                doDecode( filterName, i );
+                COSName filterName = (COSName)filterArray.get(i);
+                filterList.add(FilterFactory.INSTANCE.getFilter(filterName));
             }
         }
-        else
-        {
-            throw new IOException( "Error: Unknown filter type:" + filters );
-        }
+        return filterList;
     }
-
+    
     /**
-     * This will decode applying a single filter on the stream.
+     * Returns the length of the encoded stream.
      *
-     * @param filterName The name of the filter.
-     * @param filterIndex The index of the current filter.
-     *
-     * @throws IOException If there is an error parsing the stream.
+     * @return length in bytes
      */
-    private void doDecode(COSName filterName, int filterIndex) throws IOException
+    public long getLength()
     {
-        Filter filter = FilterFactory.INSTANCE.getFilter(filterName);
-
-        boolean done = false;
-        IOException exception = null;
-        long position = unFilteredStream.getPosition();
-        long length = unFilteredStream.getLength();
-        // in case we need it later
-        long writtenLength = unFilteredStream.getLengthWritten();
-
-        if (length == 0 && writtenLength == 0)
+        if (isWriting)
         {
-            //if the length is zero then don't bother trying to decode
-            //some filters don't work when attempting to decode
-            //with a zero length stream.  See zlib_error_01.pdf
-            IOUtils.closeQuietly(unFilteredStream);
-            unFilteredStream = new RandomAccessFileOutputStream(buffer);
-            done = true;
+            throw new IllegalStateException("There is an open OutputStream associated with " +
+                                            "this COSStream. It must be closed before querying" +
+                                            "length of this COSStream.");
         }
-        else
-        {
-            //ok this is a simple hack, sometimes we read a couple extra
-            //bytes that shouldn't be there, so we encounter an error we will just
-            //try again with one less byte.
-            for (int tryCount = 0; length > 0 && !done && tryCount < 5; tryCount++)
-            {
-                try
-                {
-                    attemptDecode(position, length, filter, filterIndex);
-                    done = true;
-                }
-                catch (IOException io)
-                {
-                    length--;
-                    exception = io;
-                }
-            }
-            if (!done)
-            {
-                //if no good stream was found then lets try again but with the
-                //length of data that was actually read and not length
-                //defined in the dictionary
-                length = writtenLength;
-                for (int tryCount = 0; !done && tryCount < 5; tryCount++)
-                {
-                    try
-                    {
-                        attemptDecode(position, length, filter, filterIndex);
-                        done = true;
-                    }
-                    catch (IOException io)
-                    {
-                        length--;
-                        exception = io;
-                    }
-                }
-            }
-        }
-        if (!done && exception != null)
-        {
-            throw exception;
-        }
-    }
-
-    // attempts to decode the stream at the given position and length
-    private void attemptDecode(long position, long length, Filter filter, int filterIndex) throws IOException
-    {
-        InputStream input = null;
-        try
-        {
-            input = new BufferedInputStream(
-                    new RandomAccessFileInputStream(buffer, position, length), BUFFER_SIZE);
-            IOUtils.closeQuietly(unFilteredStream);
-            unFilteredStream = new RandomAccessFileOutputStream(buffer);
-            decodeResult = filter.decode(input, unFilteredStream, this, filterIndex);
-        }
-        finally
-        {
-            IOUtils.closeQuietly(input);
-        }
-    }
-
-    /**
-     * This will encode the logical byte stream applying all of the filters to the stream.
-     *
-     * @throws IOException If there is an error applying a filter to the stream.
-     */
-    private void doEncode() throws IOException
-    {
-        filteredStream = unFilteredStream;
-
-        COSBase filters = getFilters();
-        if( filters == null )
-        {
-            //there is no filter to apply
-        }
-        else if( filters instanceof COSName )
-        {
-            doEncode( (COSName)filters, 0 );
-        }
-        else if( filters instanceof COSArray )
-        {
-            // apply filters in reverse order
-            COSArray filterArray = (COSArray)filters;
-            for( int i=filterArray.size()-1; i>=0; i-- )
-            {
-                COSName filterName = (COSName)filterArray.get( i );
-                doEncode( filterName, i );
-            }
-        }
-    }
-
-    /**
-     * This will encode applying a single filter on the stream.
-     *
-     * @param filterName The name of the filter.
-     * @param filterIndex The index to the filter.
-     *
-     * @throws IOException If there is an error parsing the stream.
-     */
-    private void doEncode( COSName filterName, int filterIndex ) throws IOException
-    {
-        Filter filter = FilterFactory.INSTANCE.getFilter( filterName );
-
-        InputStream input = new BufferedInputStream(
-            new RandomAccessFileInputStream( buffer, filteredStream.getPosition(),
-                                                   filteredStream.getLength() ), BUFFER_SIZE );
-        IOUtils.closeQuietly(filteredStream);
-        filteredStream = new RandomAccessFileOutputStream( buffer );
-        filter.encode( input, filteredStream, this, filterIndex );
-        IOUtils.closeQuietly(input);
+        return getInt(COSName.LENGTH, 0);
     }
 
     /**
@@ -470,103 +328,68 @@ public class COSStream extends COSDictionary implements Closeable
     {
         return getDictionaryObject(COSName.FILTER);
     }
-
+    
     /**
-     * This will create a new stream for which filtered byte should be
-     * written to.  You probably don't want this but want to use the
-     * createUnfilteredStream, which is used to write raw bytes to.
-     *
-     * @return A stream that can be written to.
-     *
-     * @throws IOException If there is an error creating the stream.
-     */
-    public OutputStream createFilteredStream() throws IOException
-    {
-        IOUtils.closeQuietly(unFilteredStream);
-        unFilteredStream = null;
-        IOUtils.closeQuietly(filteredStream);
-        filteredStream = new RandomAccessFileOutputStream( buffer );
-        return new BufferedOutputStream( filteredStream, BUFFER_SIZE );
-    }
-
-    /**
-     * This will create a new stream for which filtered byte should be
-     * written to.  You probably don't want this but want to use the
-     * createUnfilteredStream, which is used to write raw bytes to.
-     *
-     * @param expectedLength An entry where a length is expected.
-     *
-     * @return A stream that can be written to.
-     *
-     * @throws IOException If there is an error creating the stream.
-     */
-    public OutputStream createFilteredStream( COSBase expectedLength ) throws IOException
-    {
-        OutputStream out = createFilteredStream();
-        filteredStream.setExpectedLength(expectedLength);
-        return out;
-    }
-
-    /**
-     * set the filters to be applied to the stream.
+     * Sets the filters to be applied when encoding or decoding the stream.
      *
      * @param filters The filters to set on this stream.
-     *
      * @throws IOException If there is an error clearing the old filters.
+     * @deprecated Use {@link #createOutputStream(COSBase)} instead.
      */
+    @Deprecated
     public void setFilters(COSBase filters) throws IOException
     {
-        if (unFilteredStream == null)
-        {
-            // don't lose stream contents
-            doDecode();
-        }
         setItem(COSName.FILTER, filters);
-        // kill cached filtered streams
-        IOUtils.closeQuietly(filteredStream);
-        filteredStream = null;
     }
 
     /**
-     * This will create an output stream that can be written to.
-     *
-     * @return An output stream which raw data bytes should be written to.
-     *
-     * @throws IOException If there is an error creating the stream.
+     * Returns the contents of the stream as a text string.
+     * 
+     * @deprecated Use {@link #toTextString()} instead.
      */
-    public OutputStream createUnfilteredStream() throws IOException
+    @Deprecated
+    public String getString()
     {
-        IOUtils.closeQuietly(filteredStream);
-        filteredStream = null;
-        IOUtils.closeQuietly(unFilteredStream);
-        unFilteredStream = new RandomAccessFileOutputStream( buffer );
-        return new BufferedOutputStream( unFilteredStream, BUFFER_SIZE );
+        return toTextString();
+    }
+    
+    /**
+     * Returns the contents of the stream as a PDF "text string".
+     */
+    public String toTextString()
+    {
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        InputStream input = null;
+        try
+        {
+            input = createInputStream();
+            IOUtils.copy(input, out);
+        }
+        catch (IOException e)
+        {
+            return "";
+        }
+        finally
+        {
+            IOUtils.closeQuietly(input);
+        }
+        COSString string = new COSString(out.toByteArray());
+        return string.getString();
+    }
+    
+    @Override
+    public Object accept(ICOSVisitor visitor) throws IOException
+    {
+        return visitor.visitFromStream(this);
     }
     
     @Override
     public void close() throws IOException
     {
-        if (buffer != null)
+        // marks the scratch file pages as free
+        if (randomAccess != null)
         {
-            buffer.close();
-        }
-
-        if (filteredStream != null)
-        {
-            filteredStream.close();
-        }
-
-        if (unFilteredStream != null)
-        {
-            unFilteredStream.close();
-        }
-        
-        if (scratchFile != null && scratchFile.exists())
-        {
-            if (!scratchFile.delete())
-            {
-                throw new IOException("Can't delete the temporary scratch file "+scratchFile.getAbsolutePath());
-            }
+            randomAccess.close();
         }
     }
 }

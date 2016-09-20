@@ -16,32 +16,30 @@
  */
 package org.apache.pdfbox.examples.util;
 
+import java.io.ByteArrayOutputStream;
+import java.io.File;
+import java.io.IOException;
+import java.io.OutputStreamWriter;
+import java.io.Writer;
+import java.util.List;
 import org.apache.pdfbox.pdmodel.PDDocument;
-import org.apache.pdfbox.pdmodel.PDPage;
-import org.apache.pdfbox.pdmodel.common.PDStream;
 import org.apache.pdfbox.text.PDFTextStripper;
 import org.apache.pdfbox.text.TextPosition;
 
-import java.io.File;
-import java.io.IOException;
-
 /**
  * This is an example on how to get some x/y coordinates of text.
- *
- * Usage: java org.apache.pdfbox.examples.util.PrintTextLocations &lt;input-pdf&gt;
  *
  * @author Ben Litchfield
  */
 public class PrintTextLocations extends PDFTextStripper
 {
     /**
-     * Default constructor.
+     * Instantiate a new PDFTextStripper object.
      *
-     * @throws IOException If there is an error loading text stripper properties.
+     * @throws IOException If there is an error loading the properties.
      */
     public PrintTextLocations() throws IOException
     {
-        super.setSortByPosition( true );
     }
 
     /**
@@ -49,9 +47,9 @@ public class PrintTextLocations extends PDFTextStripper
      *
      * @param args The command line arguments.
      *
-     * @throws Exception If there is an error parsing the document.
+     * @throws IOException If there is an error parsing the document.
      */
-    public static void main( String[] args ) throws Exception
+    public static void main( String[] args ) throws IOException
     {
         if( args.length != 1 )
         {
@@ -63,18 +61,14 @@ public class PrintTextLocations extends PDFTextStripper
             try
             {
                 document = PDDocument.load( new File(args[0]) );
-                PrintTextLocations printer = new PrintTextLocations();
-                int pageNum = 0;
-                for( PDPage page : document.getPages() )
-                {
-                    pageNum++;
-                    System.out.println( "Processing page: " + pageNum );
-                    PDStream contents = page.getStream();
-                    if( contents != null )
-                    {
-                        printer.processPage(page);
-                    }
-                }
+
+                PDFTextStripper stripper = new PrintTextLocations();
+                stripper.setSortByPosition( true );
+                stripper.setStartPage( 0 );
+                stripper.setEndPage( document.getNumberOfPages() );
+
+                Writer dummy = new OutputStreamWriter(new ByteArrayOutputStream());
+                stripper.writeText(document, dummy);
             }
             finally
             {
@@ -87,26 +81,26 @@ public class PrintTextLocations extends PDFTextStripper
     }
 
     /**
-     * A method provided as an event interface to allow a subclass to perform
-     * some specific functionality when text needs to be processed.
-     *
-     * @param text The text to be processed
+     * Override the default functionality of PDFTextStripper.
      */
-    protected void processTextPosition( TextPosition text )
+    @Override
+    protected void writeString(String string, List<TextPosition> textPositions) throws IOException
     {
-        System.out.println( "String[" + text.getXDirAdj() + "," +
-                text.getYDirAdj() + " fs=" + text.getFontSize() + " xscale=" +
-                text.getXScale() + " height=" + text.getHeightDir() + " space=" +
-                text.getWidthOfSpace() + " width=" +
-                text.getWidthDirAdj() + "]" + text.getUnicode() );
+        for (TextPosition text : textPositions)
+        {
+            System.out.println( "String[" + text.getXDirAdj() + "," +
+                    text.getYDirAdj() + " fs=" + text.getFontSize() + " xscale=" +
+                    text.getXScale() + " height=" + text.getHeightDir() + " space=" +
+                    text.getWidthOfSpace() + " width=" +
+                    text.getWidthDirAdj() + "]" + text.getUnicode() );
+        }
     }
-
+    
     /**
      * This will print the usage for this document.
      */
     private static void usage()
     {
-        System.err.println( "Usage: java org.apache.pdfbox.examples.pdmodel.PrintTextLocations <input-pdf>" );
+        System.err.println( "Usage: java " + PrintTextLocations.class.getName() + " <input-pdf>" );
     }
-
 }

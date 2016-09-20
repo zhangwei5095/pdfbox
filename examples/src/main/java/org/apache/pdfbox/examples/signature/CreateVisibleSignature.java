@@ -20,54 +20,51 @@ import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
-import java.io.InputStream;
+import java.net.URL;
 import java.security.KeyStore;
 import java.security.KeyStoreException;
+import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
-import java.security.PrivateKey;
 import java.security.UnrecoverableKeyException;
-import java.security.cert.Certificate;
-import java.security.cert.CertificateEncodingException;
 import java.security.cert.CertificateException;
-import java.security.interfaces.RSAPrivateKey;
 import java.util.Calendar;
-import java.util.Enumeration;
+import org.apache.pdfbox.io.IOUtils;
 
 import org.apache.pdfbox.pdmodel.PDDocument;
+import org.apache.pdfbox.pdmodel.interactive.digitalsignature.ExternalSigningSupport;
 import org.apache.pdfbox.pdmodel.interactive.digitalsignature.PDSignature;
 import org.apache.pdfbox.pdmodel.interactive.digitalsignature.SignatureInterface;
 import org.apache.pdfbox.pdmodel.interactive.digitalsignature.SignatureOptions;
 import org.apache.pdfbox.pdmodel.interactive.digitalsignature.visible.PDVisibleSigProperties;
 import org.apache.pdfbox.pdmodel.interactive.digitalsignature.visible.PDVisibleSignDesigner;
-import org.bouncycastle.asn1.ASN1Primitive;
-import org.bouncycastle.asn1.x509.AlgorithmIdentifier;
-import org.bouncycastle.cert.X509CertificateHolder;
-import org.bouncycastle.cms.CMSException;
-import org.bouncycastle.cms.CMSSignedData;
-import org.bouncycastle.cms.CMSSignedDataGenerator;
-import org.bouncycastle.cms.SignerInfoGeneratorBuilder;
-import org.bouncycastle.crypto.params.RSAKeyParameters;
-import org.bouncycastle.jce.provider.BouncyCastleProvider;
-import org.bouncycastle.operator.ContentSigner;
-import org.bouncycastle.operator.DefaultDigestAlgorithmIdentifierFinder;
-import org.bouncycastle.operator.DefaultSignatureAlgorithmIdentifierFinder;
-import org.bouncycastle.operator.OperatorCreationException;
-import org.bouncycastle.operator.bc.BcDigestCalculatorProvider;
-import org.bouncycastle.operator.bc.BcRSAContentSignerBuilder;
 
 /**
- * This is an example for visual signing a pdf with bouncy castle.
+ * This is an example for visual signing a pdf.
 
  * @see CreateSignature
  * @author Vakhtang Koroghlishvili
  */
-public class CreateVisibleSignature implements SignatureInterface
+public class CreateVisibleSignature extends CreateSignatureBase
 {
-    private static final BouncyCastleProvider BCPROVIDER = new BouncyCastleProvider();
+    private SignatureOptions signatureOptions;
+    private PDVisibleSignDesigner visibleSignDesigner;
+    private final PDVisibleSigProperties visibleSignatureProperties = new PDVisibleSigProperties();
 
-    private final PrivateKey privKey;
-    private final Certificate[] cert;
-    private SignatureOptions options;
+    public void setVisibleSignDesigner(String filename, int x, int y, int zoomPercent, 
+            FileInputStream imageStream, int page) 
+            throws IOException
+    {
+        visibleSignDesigner = new PDVisibleSignDesigner(filename, imageStream, page);
+        visibleSignDesigner.xAxis(x).yAxis(y).zoom(zoomPercent);
+    }
+    
+    public void setVisibleSignatureProperties(String name, String location, String reason, int preferredSize, 
+            int page, boolean visualSignEnabled) throws IOException
+    {
+        visibleSignatureProperties.signerName(name).signerLocation(location).signatureReason(reason).
+                preferredSize(preferredSize).page(page).visualSignEnabled(visualSignEnabled).
+                setPdVisibleSignature(visibleSignDesigner).buildSignature();
+    }
 
     /**
      * Initialize the signature creator with a keystore (pkcs12) and pin that
@@ -75,145 +72,95 @@ public class CreateVisibleSignature implements SignatureInterface
      *
      * @param keystore is a pkcs12 keystore.
      * @param pin is the pin for the keystore / private key
+     * @throws KeyStoreException if the keystore has not been initialized (loaded)
+     * @throws NoSuchAlgorithmException if the algorithm for recovering the key cannot be found
+     * @throws UnrecoverableKeyException if the given password is wrong
+     * @throws CertificateException if the certificate is not valid as signing time
+     * @throws IOException if no certificate could be found
      */
     public CreateVisibleSignature(KeyStore keystore, char[] pin)
-            throws KeyStoreException, UnrecoverableKeyException, NoSuchAlgorithmException, IOException
+            throws KeyStoreException, UnrecoverableKeyException, NoSuchAlgorithmException, IOException, CertificateException
     {
-        // grabs the first alias from the keystore and get the private key. An
-        // alternative method or constructor could be used for setting a specific
-        // alias that should be used.
-        Enumeration<String> aliases = keystore.aliases();
-        String alias = null;
-        if (aliases.hasMoreElements())
-        {
-            alias = aliases.nextElement();
-        }
-        else
-        {
-            throw new IOException("Could not find alias");
-        }
-        privKey = (PrivateKey) keystore.getKey(alias, pin);
-        cert = keystore.getCertificateChain(alias);
+        super(keystore, pin);
     }
 
     /**
-     * Signs the given pdf file.
+     * Sign pdf file and create new file that ends with "_signed.pdf".
      *
-     * @param document is the pdf document
-     * @param signatureProperties
-     * @return the signed pdf document
+     * @param inputFile The source pdf document file.
+     * @param signedFile The file to be signed.
+     * @param tsaClient optional TSA client
      * @throws IOException
      */
-    public File signPDF(File document, PDVisibleSigProperties signatureProperties) throws IOException
+    public void signPDF(File inputFile, File signedFile, TSAClient tsaClient) throws IOException
     {
-        byte[] buffer = new byte[8 * 1024];
-        if (document == null || !document.exists())
+        setTsaClient(tsaClient);
+
+        if (inputFile == null || !inputFile.exists())
         {
             throw new IOException("Document for signing does not exist");
         }
 
         // creating output document and prepare the IO streams.
-        String name = document.getName();
-        String substring = name.substring(0, name.lastIndexOf('.'));
-
-        File outputDocument = new File(document.getParent(), substring + "_signed.pdf");
-        FileInputStream fis = new FileInputStream(document);
-        FileOutputStream fos = new FileOutputStream(outputDocument);
-
-        int c;
-        while ((c = fis.read(buffer)) != -1)
-        {
-            fos.write(buffer, 0, c);
-        }
-        fis.close();
+        FileOutputStream fos = new FileOutputStream(signedFile);
 
         // load document
-        PDDocument doc = PDDocument.load(document);
+        PDDocument doc = PDDocument.load(inputFile);
 
         // create signature dictionary
         PDSignature signature = new PDSignature();
-        signature.setFilter(PDSignature.FILTER_ADOBE_PPKLITE); // default filter
+
+        // default filter
+        signature.setFilter(PDSignature.FILTER_ADOBE_PPKLITE);
+        
         // subfilter for basic and PAdES Part 2 signatures
         signature.setSubFilter(PDSignature.SUBFILTER_ADBE_PKCS7_DETACHED);
-        signature.setName("signer name");
-        signature.setLocation("signer location");
-        signature.setReason("reason for signature");
+        
+        if (visibleSignatureProperties != null)
+        {
+            signature.setName(visibleSignatureProperties.getSignerName());
+            signature.setLocation(visibleSignatureProperties.getSignerLocation());
+            signature.setReason(visibleSignatureProperties.getSignatureReason());
+        }
 
         // the signing date, needed for valid signature
         signature.setSignDate(Calendar.getInstance());
 
-        // register signature dictionary and sign interface
+        // do not set SignatureInterface instance, if external signing used
+        SignatureInterface signatureInterface = isExternalSigning() ? null : this;
 
-        if (signatureProperties != null && signatureProperties.isVisualSignEnabled())
+        // register signature dictionary and sign interface
+        if (visibleSignatureProperties != null && visibleSignatureProperties.isVisualSignEnabled())
         {
-            try
-            {
-                options = new SignatureOptions();
-                options.setVisualSignature(signatureProperties);
-                doc.addSignature(signature, this, options);
-            }
-            finally
-            {
-                if (options != null)
-                {
-                    options.close();
-                }
-            }
+            signatureOptions = new SignatureOptions();
+            signatureOptions.setVisualSignature(visibleSignatureProperties.getVisibleSignature());
+            signatureOptions.setPage(visibleSignatureProperties.getPage() - 1);
+            doc.addSignature(signature, signatureInterface, signatureOptions);
         }
         else
         {
-            doc.addSignature(signature, this);
+            doc.addSignature(signature, signatureInterface);
         }
 
-        // write incremental (only for signing purpose)
-        doc.saveIncremental(fos);
-
-        return outputDocument;
-    }
-
-    /**
-     * SignatureInterface implementation.
-     *
-     * This method will be called from inside of the pdfbox and create the pkcs7 signature.
-     * The given InputStream contains the bytes that are given by the byte range.
-     *
-     * This method is for internal use only. <-- TODO this method should be private
-     *
-     * Use your favorite cryptographic library to implement pkcs7 signature creation.
-     */
-    @Override
-    public byte[] sign(InputStream content) throws IOException
-    {
-        try
+        if (isExternalSigning())
         {
-            org.bouncycastle.asn1.x509.Certificate certificate =
-                    org.bouncycastle.asn1.x509.Certificate.getInstance(ASN1Primitive.fromByteArray(cert[0].getEncoded()));
-
-            AlgorithmIdentifier sigAlgId = new DefaultSignatureAlgorithmIdentifierFinder().find("SHA256WITHRSAENCRYPTION");
-            AlgorithmIdentifier digAlgId = new DefaultDigestAlgorithmIdentifierFinder().find(sigAlgId);
-            RSAPrivateKey privateRSAKey = (RSAPrivateKey)privKey;
-            RSAKeyParameters keyParams = new RSAKeyParameters(true, privateRSAKey.getModulus(), privateRSAKey.getPrivateExponent());
-            ContentSigner sigGen = new BcRSAContentSignerBuilder(sigAlgId, digAlgId).build(keyParams);
-            CMSSignedDataGenerator gen = new CMSSignedDataGenerator();
-            gen.addSignerInfoGenerator(
-                    new SignerInfoGeneratorBuilder(new BcDigestCalculatorProvider())
-                        .build(sigGen, new X509CertificateHolder(certificate)));
-            CMSProcessableInputStream processable = new CMSProcessableInputStream(content);
-            CMSSignedData signedData = gen.generate(processable, false);
-            return signedData.getEncoded();
+            System.out.println("Signing externally " + signedFile.getName());
+            ExternalSigningSupport externalSigning = doc.saveIncrementalForExternalSigning(fos);
+            // invoke external signature service
+            byte[] cmsSignature = sign(externalSigning.getContent());
+            // set signature bytes received from the service
+            externalSigning.setSignature(cmsSignature);
         }
-        catch (CertificateEncodingException e)
+        else
         {
-            throw new IOException(e);
+            // write incremental (only for signing purpose)
+            doc.saveIncremental(fos);
         }
-        catch (CMSException e)
-        {
-            throw new IOException(e);
-        }
-        catch (OperatorCreationException e)
-        {
-            throw new IOException(e);
-        }
+        doc.close();
+        
+        // do not close options before saving, because some COSStream objects within options 
+        // are transferred to the signed document.
+        IOUtils.closeQuietly(signatureOptions);
     }
 
     /**
@@ -222,39 +169,75 @@ public class CreateVisibleSignature implements SignatureInterface
      * [1] pin
      * [2] document that will be signed
      * [3] image of visible signature
+     *
+     * @param args
+     * @throws java.security.KeyStoreException
+     * @throws java.security.cert.CertificateException
+     * @throws java.io.IOException
+     * @throws java.security.NoSuchAlgorithmException
+     * @throws java.security.UnrecoverableKeyException
      */
     public static void main(String[] args) throws KeyStoreException, CertificateException,
             IOException, NoSuchAlgorithmException, UnrecoverableKeyException
     {
-
-        if (args.length != 4)
+        // generate with
+        // keytool -storepass 123456 -storetype PKCS12 -keystore file.p12 -genkey -alias client -keyalg RSA
+        if (args.length < 4)
         {
             usage();
             System.exit(1);
         }
-        else
+
+        String tsaUrl = null;
+        boolean externalSig = false;
+        for (int i = 0; i < args.length; i++)
         {
-            File ksFile = new File(args[0]);
-            KeyStore keystore = KeyStore.getInstance("PKCS12", BCPROVIDER);
-            char[] pin = args[1].toCharArray();
-            keystore.load(new FileInputStream(ksFile), pin);
-
-            File document = new File(args[2]);
-
-            CreateVisibleSignature signing = new CreateVisibleSignature(keystore, pin.clone());
-
-            FileInputStream image = new FileInputStream(args[3]);
-
-            PDVisibleSignDesigner visibleSig = new PDVisibleSignDesigner(args[2], image, 1);
-            visibleSig.xAxis(0).yAxis(0).zoom(-50).signatureFieldName("signature");
-
-            PDVisibleSigProperties signatureProperties = new PDVisibleSigProperties();
-
-            signatureProperties.signerName("name").signerLocation("location").signatureReason("Security").preferredSize(0)
-                    .page(1).visualSignEnabled(true).setPdVisibleSignature(visibleSig).buildSignature();
-
-            signing.signPDF(document, signatureProperties);
+            if (args[i].equals("-tsa"))
+            {
+                i++;
+                if (i >= args.length)
+                {
+                    usage();
+                    System.exit(1);
+                }
+                tsaUrl = args[i];
+            }
+            if (args[i].equals("-e"))
+            {
+                externalSig = true;
+            }
         }
+
+        File ksFile = new File(args[0]);
+        KeyStore keystore = KeyStore.getInstance("PKCS12");
+        char[] pin = args[1].toCharArray();
+        keystore.load(new FileInputStream(ksFile), pin);
+
+        // TSA client
+        TSAClient tsaClient = null;
+        if (tsaUrl != null)
+        {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            tsaClient = new TSAClient(new URL(tsaUrl), null, null, digest);
+        }
+
+        File documentFile = new File(args[2]);
+
+        CreateVisibleSignature signing = new CreateVisibleSignature(keystore, pin.clone());
+
+        FileInputStream imageStream = new FileInputStream(args[3]);
+
+        String name = documentFile.getName();
+        String substring = name.substring(0, name.lastIndexOf('.'));
+        File signedDocumentFile = new File(documentFile.getParent(), substring + "_signed.pdf");
+
+        // page is 1-based here
+        int page = 1;
+        signing.setVisibleSignDesigner(args[2], 0, 0, -50, imageStream, page);
+        imageStream.close();
+        signing.setVisibleSignatureProperties("name", "location", "Security", 0, page, true);
+        signing.setExternalSigning(externalSig);
+        signing.signPDF(documentFile, signedDocumentFile, tsaClient);
     }
 
     /**
@@ -263,6 +246,10 @@ public class CreateVisibleSignature implements SignatureInterface
     private static void usage()
     {
         System.err.println("Usage: java " + CreateVisibleSignature.class.getName()
-                + " <pkcs12-keystore-file> <pin> <input-pdf> <sign-image>");
+                + " <pkcs12-keystore-file> <pin> <input-pdf> <sign-image>\n" + "" +
+                           "options:\n" +
+                           "  -tsa <url>    sign timestamp using the given TSA server\n"+
+                           "  -e            sign using external signature creation scenario");
     }
+
 }

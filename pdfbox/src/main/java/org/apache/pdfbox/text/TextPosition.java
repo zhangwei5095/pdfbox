@@ -19,6 +19,8 @@ package org.apache.pdfbox.text;
 import java.text.Normalizer;
 import java.util.HashMap;
 import java.util.Map;
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
 import org.apache.pdfbox.pdmodel.font.PDFont;
 import org.apache.pdfbox.util.Matrix;
 
@@ -29,6 +31,8 @@ import org.apache.pdfbox.util.Matrix;
  */
 public final class TextPosition
 {
+    private static final Log LOG = LogFactory.getLog(TextPosition.class);
+
     private static final Map<Integer, String> DIACRITICS = createDiacritics();
 
     // Adds non-decomposing diacritics to the hash with their related combining character.
@@ -38,7 +42,7 @@ public final class TextPosition
     // normalization.
     private static Map<Integer, String> createDiacritics()
     {
-        HashMap<Integer, String> map = new HashMap<Integer, String>();
+        Map<Integer, String> map = new HashMap<Integer, String>(31);
         map.put(0x0060, "\u0300");
         map.put(0x02CB, "\u0300");
         map.put(0x0027, "\u0301");
@@ -98,6 +102,7 @@ public final class TextPosition
     // mutable
     private float[] widths;
     private String unicode;
+    private float direction = -1;
 
     /**
      * Constructor.
@@ -105,7 +110,7 @@ public final class TextPosition
      * @param pageRotation rotation of the page that the text is located in
      * @param pageWidth rotation of the page that the text is located in
      * @param pageHeight rotation of the page that the text is located in
-     * @param textMatrix TextMatrix for start of text (in display units)
+     * @param textMatrix text rendering matrix for start of text (in display units)
      * @param endX x coordinate of the end position
      * @param endY y coordinate of the end position
      * @param maxHeight Maximum height of text (in display units)
@@ -115,7 +120,7 @@ public final class TextPosition
      * @param charCodes An array of the internal PDF character codes for the glyphs in this text.
      * @param font The current font for this text position.
      * @param fontSize The new font size.
-     * @param fontSizeInPt The font size in pt units.
+     * @param fontSizeInPt The font size in pt units (see {@link #getFontSizeInPt()} for details).
      */
     public TextPosition(int pageRotation, float pageWidth, float pageHeight, Matrix textMatrix,
                         float endX, float endY, float maxHeight, float individualWidth,
@@ -154,7 +159,9 @@ public final class TextPosition
     }
 
     /**
-     * Return the string of characters stored in this object.
+     * Return the string of characters stored in this object. The length can be different than the
+     * CharacterCodes length e.g. if ligatures are used ("fi", "fl", "ffl") where one glyph
+     * represents several unicode characters.
      *
      * @return The string on the screen.
      */
@@ -174,7 +181,10 @@ public final class TextPosition
     }
 
     /**
-     * Return the text matrix stored in this object.
+     * The matrix containing the starting text position and scaling. Despite the name, it is not the
+     * text matrix set by the "Tm" operator, it is really the effective text rendering matrix (which
+     * is dependent on the current transformation matrix (set by the "cm" operator), the text matrix
+     * (set by the "Tm" operator), the font size (set by the "Tf" operator) and the page cropbox).
      *
      * @return The Matrix containing the starting text position
      */
@@ -189,36 +199,43 @@ public final class TextPosition
      */
     public float getDir()
     {
-        float a = textMatrix.getScaleY();
-        float b = textMatrix.getShearY();
-        float c = textMatrix.getShearX();
-        float d = textMatrix.getScaleX();
-
-        // 12 0   left to right
-        // 0 12
-        if (a > 0 && Math.abs(b) < d && Math.abs(c) < a && d > 0)
+        if (direction < 0)
         {
-            return 0;
+            float a = textMatrix.getScaleY();
+            float b = textMatrix.getShearY();
+            float c = textMatrix.getShearX();
+            float d = textMatrix.getScaleX();
+    
+            // 12 0   left to right
+            // 0 12
+            if (a > 0 && Math.abs(b) < d && Math.abs(c) < a && d > 0)
+            {
+                direction = 0;
+            }
+            // -12 0   right to left (upside down)
+            // 0 -12
+            else if (a < 0 && Math.abs(b) < Math.abs(d) && Math.abs(c) < Math.abs(a) && d < 0)
+            {
+                direction = 180;
+            }
+            // 0  12    up
+            // -12 0
+            else if (Math.abs(a) < Math.abs(c) && b > 0 && c < 0 && Math.abs(d) < b)
+            {
+                direction = 90;
+            }
+            // 0  -12   down
+            // 12 0
+            else if (Math.abs(a) < c && b < 0 && c > 0 && Math.abs(d) < Math.abs(b))
+            {
+                direction = 270;
+            }
+            else
+            {
+                direction = 0;
+            }
         }
-        // -12 0   right to left (upside down)
-        // 0 -12
-        else if (a < 0 && Math.abs(b) < Math.abs(d) && Math.abs(c) < Math.abs(a) && d < 0)
-        {
-            return 180;
-        }
-        // 0  12    up
-        // -12 0
-        else if (Math.abs(a) < Math.abs(c) && b > 0 && c < 0 && Math.abs(d) < b)
-        {
-            return 90;
-        }
-        // 0  -12   down
-        // 12 0
-        else if (Math.abs(a) < c && b < 0 && c > 0 && Math.abs(d) < Math.abs(b))
-        {
-            return 270;
-        }
-        return 0;
+        return direction;
     }
 
     /**
@@ -391,7 +408,10 @@ public final class TextPosition
     }
 
     /**
-     * This will get the font size that this object is suppose to be drawn at.
+     * This will get the font size that has been set with the "Tf" operator (Set text font and
+     * size). When the text is rendered, it may appear bigger or smaller depending on the current
+     * transformation matrix (set by the "cm" operator) and the text matrix (set by the "Tm"
+     * operator).
      *
      * @return The font size.
      */
@@ -401,8 +421,11 @@ public final class TextPosition
     }
 
     /**
-     * This will get the font size in pt. To get this size we have to multiply the pdf-fontsize
-     * and the scaling from the textmatrix
+     * This will get the font size in pt. To get this size we have to multiply the font size from
+     * {@link #getFontSize() getFontSize()} with the text matrix (set by the "Tm" operator)
+     * horizontal scaling factor and truncate the result to integer. The actual rendering may appear
+     * bigger or smaller depending on the current transformation matrix (set by the "cm" operator).
+     * To get the size in rendering, use {@link #getXScale() getXScale()}.
      *
      * @return The font size in pt.
      */
@@ -433,7 +456,11 @@ public final class TextPosition
     }
 
     /**
-     * @return Returns the xScale.
+     * This will get the X scaling factor. This is dependent on the current transformation matrix
+     * (set by the "cm" operator), the text matrix (set by the "Tm" operator) and the font size (set
+     * by the "Tf" operator).
+     *
+     * @return The X scaling factor.
      */
     public float getXScale()
     {
@@ -441,7 +468,11 @@ public final class TextPosition
     }
 
     /**
-     * @return Returns the yScale.
+     * This will get the Y scaling factor. This is dependent on the current transformation matrix
+     * (set by the "cm" operator), the text matrix (set by the "Tm" operator) and the font size (set
+     * by the "Tf" operator).
+     *
+     * @return The Y scaling factor.
      */
     public float getYScale()
     {
@@ -451,7 +482,7 @@ public final class TextPosition
     /**
      * Get the widths of each individual character.
      *
-     * @return An array that is the same length as the length of the string.
+     * @return An array that has the same length as the CharacterCodes array.
      */
     public float[] getIndividualWidths()
     {
@@ -468,10 +499,11 @@ public final class TextPosition
     public boolean contains(TextPosition tp2)
     {
         double thisXstart = getXDirAdj();
-        double thisXend = getXDirAdj() + getWidthDirAdj();
+        double thisWidth = getWidthDirAdj();
+        double thisXend = thisXstart + thisWidth;
 
         double tp2Xstart = tp2.getXDirAdj();
-        double tp2Xend = tp2.getXDirAdj() + tp2.getWidthDirAdj();
+        double tp2Xend = tp2Xstart + tp2.getWidthDirAdj();
 
         // no X overlap at all so return as soon as possible
         if (tp2Xend <= thisXstart || tp2Xstart >= thisXend)
@@ -481,8 +513,10 @@ public final class TextPosition
 
         // no Y overlap at all so return as soon as possible. Note: 0.0 is in the upper left and
         // y-coordinate is top of TextPosition
-        if (tp2.getYDirAdj() + tp2.getHeightDir() < getYDirAdj() ||
-           tp2.getYDirAdj() > getYDirAdj() + getHeightDir())
+        double thisYstart = getYDirAdj();
+        double tp2Ystart = tp2.getYDirAdj();
+        if (tp2Ystart + tp2.getHeightDir() < thisYstart ||
+                tp2Ystart > thisYstart + getHeightDir())
         {
             return false;
         }
@@ -492,13 +526,13 @@ public final class TextPosition
         else if (tp2Xstart > thisXstart && tp2Xend > thisXend)
         {
             double overlap = thisXend - tp2Xstart;
-            double overlapPercent = overlap/getWidthDirAdj();
+            double overlapPercent = overlap/thisWidth;
             return overlapPercent > .15;
         }
         else if (tp2Xstart < thisXstart && tp2Xend < thisXend)
         {
             double overlap = tp2Xend - thisXstart;
-            double overlapPercent = overlap/getWidthDirAdj();
+            double overlapPercent = overlap/thisWidth;
             return overlapPercent > .15;
         }
         return true;
@@ -529,6 +563,12 @@ public final class TextPosition
 
         for (int i = 0; i < strLen && !wasAdded; i++)
         {
+            if (i >= widths.length)
+            {
+                LOG.info("diacritic " + diacritic.getUnicode() + " on ligature " + unicode + 
+                        " is not supported yet and is ignored (PDFBOX-2831)");
+                break;
+            }
             float currCharXEnd = currCharXStart + widths[i];
 
              // this is the case where there is an overlap of the diacritic character with the

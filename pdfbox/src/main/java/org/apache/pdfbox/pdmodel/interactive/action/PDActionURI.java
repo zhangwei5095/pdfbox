@@ -17,6 +17,7 @@
 package org.apache.pdfbox.pdmodel.interactive.action;
 
 import org.apache.pdfbox.cos.COSDictionary;
+import org.apache.pdfbox.cos.COSName;
 
 /**
  * This represents a URI action that can be executed in a PDF document.
@@ -51,28 +52,6 @@ public class PDActionURI extends PDAction
     }
 
     /**
-     * This will get the type of action that the actions dictionary describes.
-     * It must be URI for a URI action.
-     *
-     * @return The S entry of the specific URI action dictionary.
-     */
-    public String getS()
-    {
-        return action.getNameAsString("S");
-    }
-
-    /**
-     * This will set the type of action that the actions dictionary describes.
-     * It must be URI for a URI action.
-     *
-     * @param s The URI action.
-     */
-    public void setS(String s)
-    {
-        action.setName("S", s);
-    }
-
-    /**
      * This will get the uniform resource identifier to resolve, encoded in
      * 7-bit ASCII.
      *
@@ -80,7 +59,7 @@ public class PDActionURI extends PDAction
      */
     public String getURI()
     {
-        return action.getString("URI");
+        return action.getString(COSName.URI);
     }
 
     /**
@@ -91,7 +70,7 @@ public class PDActionURI extends PDAction
      */
     public void setURI(String uri)
     {
-        action.setString("URI", uri);
+        action.setString(COSName.URI, uri);
     }
 
     /**

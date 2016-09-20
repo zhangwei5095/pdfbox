@@ -24,6 +24,7 @@ import org.apache.pdfbox.cos.COSArray;
 import org.apache.pdfbox.cos.COSBase;
 import org.apache.pdfbox.cos.COSDictionary;
 import org.apache.pdfbox.cos.COSName;
+import org.apache.pdfbox.cos.COSObject;
 import org.apache.pdfbox.cos.COSStream;
 import org.apache.pdfbox.pdmodel.common.COSArrayList;
 import org.apache.pdfbox.pdmodel.common.COSObjectable;
@@ -38,6 +39,8 @@ import org.apache.pdfbox.pdmodel.interactive.action.PDActionFactory;
 import org.apache.pdfbox.pdmodel.interactive.action.PDDocumentCatalogAdditionalActions;
 import org.apache.pdfbox.pdmodel.interactive.action.PDURIDictionary;
 import org.apache.pdfbox.pdmodel.interactive.documentnavigation.destination.PDDestination;
+import org.apache.pdfbox.pdmodel.interactive.documentnavigation.destination.PDNamedDestination;
+import org.apache.pdfbox.pdmodel.interactive.documentnavigation.destination.PDPageDestination;
 import org.apache.pdfbox.pdmodel.interactive.documentnavigation.outline.PDDocumentOutline;
 import org.apache.pdfbox.pdmodel.interactive.form.PDAcroForm;
 import org.apache.pdfbox.pdmodel.interactive.pagenavigation.PDThread;
@@ -122,7 +125,7 @@ public class PDDocumentCatalog implements COSObjectable
     public PDPageTree getPages()
     {
         // todo: cache me?
-        return new PDPageTree((COSDictionary)root.getDictionaryObject(COSName.PAGES));
+        return new PDPageTree((COSDictionary)root.getDictionaryObject(COSName.PAGES), document);
     }
 
     /**
@@ -132,8 +135,8 @@ public class PDDocumentCatalog implements COSObjectable
      */
     public PDViewerPreferences getViewerPreferences()
     {
-        COSDictionary dict = (COSDictionary)root.getDictionaryObject(COSName.VIEWER_PREFERENCES);
-        return dict == null ? null : new PDViewerPreferences(dict);
+        COSBase base = root.getDictionaryObject(COSName.VIEWER_PREFERENCES);
+        return base instanceof COSDictionary ? new PDViewerPreferences((COSDictionary) base) : null;
     }
 
     /**
@@ -292,6 +295,52 @@ public class PDDocumentCatalog implements COSObjectable
     }
 
     /**
+     * @return The named destinations dictionary for this document or null if none exists.
+     */
+    public PDDocumentNameDestinationDictionary getDests()
+    {
+        PDDocumentNameDestinationDictionary nameDic = null;
+        COSDictionary dests = (COSDictionary) root.getDictionaryObject(COSName.DESTS);
+        if (dests != null)
+        {
+            nameDic = new PDDocumentNameDestinationDictionary(dests);
+        }
+        return nameDic;
+    }
+    
+    /**
+     * Find the page destination from a named destination.
+     * @param namedDest the named destination.
+     * @return a PDPageDestination object or null if not found.
+     * @throws IOException if there is an error creating the PDPageDestination object.
+     */
+    public PDPageDestination findNamedDestinationPage(PDNamedDestination namedDest)
+            throws IOException
+    {
+        PDPageDestination pageDestination = null;
+        PDDocumentNameDictionary namesDict = getNames();
+        if (namesDict != null)
+        {
+            PDDestinationNameTreeNode destsTree = namesDict.getDests();
+            if (destsTree != null)
+            {
+                pageDestination = destsTree.getValue(namedDest.getNamedDestination());
+            }
+        }
+        if (pageDestination == null)
+        {
+            // Look up /Dests dictionary from catalog
+            PDDocumentNameDestinationDictionary nameDestDict = getDests();
+            if (nameDestDict != null)
+            {
+                String name = namedDest.getNamedDestination();
+                pageDestination = (PDPageDestination) nameDestDict.getDestination(name);
+            }
+        }
+        return pageDestination;
+    }
+    
+    /**
      * Sets the names dictionary for the document.
      *
      * @param names The names dictionary that is associated with this document.
@@ -336,7 +385,11 @@ public class PDDocumentCatalog implements COSObjectable
         {
             for (COSBase cosBase : array)
             {
-                PDOutputIntent oi = new PDOutputIntent((COSDictionary)cosBase);
+                if (cosBase instanceof COSObject)
+                {
+                    cosBase = ((COSObject)cosBase).getObject();
+                }
+                PDOutputIntent oi = new PDOutputIntent((COSDictionary) cosBase);
                 retval.add(oi);
             }
         }

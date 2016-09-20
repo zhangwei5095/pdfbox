@@ -27,12 +27,12 @@ import org.apache.pdfbox.cos.COSName;
 import org.apache.pdfbox.pdmodel.common.COSObjectable;
 import org.apache.pdfbox.pdmodel.common.function.PDFunction;
 import org.apache.pdfbox.pdmodel.graphics.PDXObject;
-import org.apache.pdfbox.pdmodel.graphics.form.PDFormXObject;
+import org.apache.pdfbox.pdmodel.graphics.form.PDTransparencyGroup;
 
 /**
  * Soft mask.
  *
- * @author Kühn & Weyh Software, GmbH
+ * @author Kühn &amp; Weyh Software GmbH
  */
 public final class PDSoftMask implements COSObjectable
 {
@@ -68,9 +68,9 @@ public final class PDSoftMask implements COSObjectable
 
     private static final Log LOG = LogFactory.getLog(PDSoftMask.class);
 
-    private COSDictionary dictionary;
+    private final COSDictionary dictionary;
     private COSName subType = null;
-    private PDFormXObject group = null;
+    private PDTransparencyGroup group = null;
     private COSArray backdropColor = null;
     private PDFunction transferFunction = null;
 
@@ -83,12 +83,8 @@ public final class PDSoftMask implements COSObjectable
         this.dictionary = dictionary;
     }
 
-    public COSBase getCOSObject()
-    {
-        return dictionary;
-    }
-
-    public COSDictionary getCOSDictionary()
+    @Override
+    public COSDictionary getCOSObject()
     {
         return dictionary;
     }
@@ -100,7 +96,7 @@ public final class PDSoftMask implements COSObjectable
     {
         if (subType == null)
         {
-            subType = (COSName) getCOSDictionary().getDictionaryObject(COSName.S);
+            subType = (COSName) getCOSObject().getDictionaryObject(COSName.S);
         }
         return subType;
     }
@@ -111,15 +107,14 @@ public final class PDSoftMask implements COSObjectable
      * @return form containing the transparency group
      * @throws IOException
      */
-    public PDFormXObject getGroup() throws IOException
+    public PDTransparencyGroup getGroup() throws IOException
     {
         if (group == null)
         {
-            COSBase cosGroup = getCOSDictionary().getDictionaryObject(COSName.G);
+            COSBase cosGroup = getCOSObject().getDictionaryObject(COSName.G);
             if (cosGroup != null)
             {
-                group = (PDFormXObject) PDXObject
-                        .createXObject(cosGroup, COSName.G.getName(), null);
+                group = (PDTransparencyGroup) PDXObject.createXObject(cosGroup, null);
             }
         }
         return group;
@@ -132,19 +127,20 @@ public final class PDSoftMask implements COSObjectable
     {
         if (backdropColor == null)
         {
-            backdropColor = (COSArray) getCOSDictionary().getDictionaryObject(COSName.BC);
+            backdropColor = (COSArray) getCOSObject().getDictionaryObject(COSName.BC);
         }
         return backdropColor;
     }
 
     /**
      * Returns the transfer function.
+     * @throws IOException If we are unable to create the PDFunction object.
      */
     public PDFunction getTransferFunction() throws IOException
     {
         if (transferFunction == null)
         {
-            COSBase cosTF = getCOSDictionary().getDictionaryObject(COSName.TR);
+            COSBase cosTF = getCOSObject().getDictionaryObject(COSName.TR);
             if (cosTF != null)
             {
                 transferFunction = PDFunction.create(cosTF);

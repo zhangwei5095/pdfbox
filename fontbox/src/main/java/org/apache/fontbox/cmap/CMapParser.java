@@ -27,6 +27,8 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+import org.apache.fontbox.util.Charsets;
+
 /**
  * Parses a CMap stream.
  *
@@ -74,6 +76,7 @@ public class CMapParser
      * Parses a predefined CMap.
      *
      * @param name CMap name.
+     * @return The parsed predefined CMap as a java object.
      * @throws IOException If the CMap could not be parsed.
      */
     public CMap parsePredefined(String name) throws IOException
@@ -372,9 +375,12 @@ public class CMapParser
             {
                 tokenBytes = (byte[]) nextToken;
             }
+            if (tokenBytes.length == 0)
+            {
+                // PDFBOX-3450: ignore <>
+                continue;
+            }
             boolean done = false;
-
-            String value = null;
 
             int arrayIndex = 0;
             while (!done)
@@ -383,7 +389,7 @@ public class CMapParser
                 {
                     done = true;
                 }
-                value = createStringFromBytes(tokenBytes);
+                String value = createStringFromBytes(tokenBytes);
                 result.addCharMapping(startCode, value);
                 increment(startCode);
 
@@ -473,7 +479,7 @@ public class CMapParser
             List<Object> list = new ArrayList<Object>();
 
             Object nextToken = parseNextToken(is);
-            while (nextToken != null && nextToken != MARK_END_OF_ARRAY)
+            while (nextToken != null && !MARK_END_OF_ARRAY.equals(nextToken))
             {
                 list.add(nextToken);
                 nextToken = parseNextToken(is);
@@ -489,7 +495,7 @@ public class CMapParser
                 Map<String, Object> result = new HashMap<String, Object>();
                 // we are reading a dictionary
                 Object key = parseNextToken(is);
-                while (key instanceof LiteralName && key != MARK_END_OF_DICTIONARY)
+                while (key instanceof LiteralName && !MARK_END_OF_DICTIONARY.equals(key))
                 {
                     Object value = parseNextToken(is);
                     result.put(((LiteralName) key).name, value);
@@ -597,11 +603,11 @@ public class CMapParser
             String value = buffer.toString();
             if (value.indexOf('.') >= 0)
             {
-                retval = new Double(value);
+                retval = Double.valueOf(value);
             }
             else
             {
-                retval = new Integer(value);
+                retval = Integer.valueOf(value);
             }
             break;
         }
@@ -630,7 +636,7 @@ public class CMapParser
         return retval;
     }
 
-    private static void readUntilEndOfLine(InputStream is, StringBuffer buf) throws IOException
+    private void readUntilEndOfLine(InputStream is, StringBuffer buf) throws IOException
     {
         int nextByte = is.read();
         while (nextByte != -1 && nextByte != 0x0D && nextByte != 0x0A)
@@ -640,13 +646,13 @@ public class CMapParser
         }
     }
 
-    private static boolean isWhitespaceOrEOF(int aByte)
+    private boolean isWhitespaceOrEOF(int aByte)
     {
         return aByte == -1 || aByte == 0x20 || aByte == 0x0D || aByte == 0x0A;
     }
 
     /** Is this a standard PDF delimiter character? */
-    private static boolean isDelimiter(int aByte) 
+    private boolean isDelimiter(int aByte) 
     {
         switch (aByte) 
         {
@@ -684,7 +690,7 @@ public class CMapParser
         }
     }
 
-    private static int createIntFromBytes(byte[] bytes)
+    private int createIntFromBytes(byte[] bytes)
     {
         int intValue = (bytes[0] + 256) % 256;
         if (bytes.length == 2)
@@ -695,21 +701,21 @@ public class CMapParser
         return intValue;
     }
 
-    private static String createStringFromBytes(byte[] bytes) throws IOException
+    private String createStringFromBytes(byte[] bytes) throws IOException
     {
         String retval;
         if (bytes.length == 1)
         {
-            retval = new String(bytes, "ISO-8859-1");
+            retval = new String(bytes, Charsets.ISO_8859_1);
         }
         else
         {
-            retval = new String(bytes, "UTF-16BE");
+            retval = new String(bytes, Charsets.UTF_16BE);
         }
         return retval;
     }
 
-    private static int compare(byte[] first, byte[] second)
+    private int compare(byte[] first, byte[] second)
     {
         int retval = 1;
         int firstLength = first.length;
@@ -736,7 +742,7 @@ public class CMapParser
     /**
      * Internal class.
      */
-    private final class LiteralName
+    private static final class LiteralName
     {
         private String name;
 
@@ -749,7 +755,7 @@ public class CMapParser
     /**
      * Internal class.
      */
-    private final class Operator
+    private static final class Operator
     {
         private String op;
 

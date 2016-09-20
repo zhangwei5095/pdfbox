@@ -23,12 +23,11 @@ import java.io.InputStream;
 import java.io.OutputStreamWriter;
 import java.io.Writer;
 import java.util.Map;
-
+import org.apache.pdfbox.io.IOUtils;
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.pdmodel.PDDocumentCatalog;
 import org.apache.pdfbox.pdmodel.PDDocumentNameDictionary;
 import org.apache.pdfbox.pdmodel.PDEmbeddedFilesNameTreeNode;
-import org.apache.pdfbox.pdmodel.common.COSObjectable;
 import org.apache.pdfbox.pdmodel.common.filespecification.PDComplexFileSpecification;
 import org.apache.pdfbox.pdmodel.common.filespecification.PDEmbeddedFile;
 import org.apache.pdfbox.pdmodel.encryption.AccessPermission;
@@ -40,7 +39,7 @@ import org.apache.pdfbox.text.PDFTextStripper;
  *
  * @author Ben Litchfield
  */
-public class ExtractText
+public final class ExtractText
 {
     private static final String PASSWORD = "-password";
     private static final String ENCODING = "-encoding";
@@ -50,8 +49,9 @@ public class ExtractText
     private static final String SORT = "-sort";
     private static final String IGNORE_BEADS = "-ignoreBeads";
     private static final String DEBUG = "-debug";
-    // jjb - added simple HTML output
     private static final String HTML = "-html";
+    
+    private static final String STD_ENCODING = "UTF-8";
 
     /*
      * debug flag
@@ -71,9 +71,9 @@ public class ExtractText
      *
      * @param args Command line arguments, should be one and a reference to a file.
      *
-     * @throws Exception If there is an error parsing the document.
+     * @throws IOException if there is an error reading the document or extracting the text.
      */
-    public static void main( String[] args ) throws Exception
+    public static void main( String[] args ) throws IOException
     {
         // suppress the Dock icon on OS X
         System.setProperty("apple.awt.UIElement", "true");
@@ -85,18 +85,16 @@ public class ExtractText
      * Starts the text extraction.
      *  
      * @param args the commandline arguments.
-     * 
-     * @throws Exception if something went wrong.
+     * @throws IOException if there is an error reading the document or extracting the text.
      */
-    public void startExtraction( String[] args ) throws Exception
+    public void startExtraction( String[] args ) throws IOException
     {
         boolean toConsole = false;
         boolean toHTML = false;
-        boolean force = false;
         boolean sort = false;
         boolean separateBeads = true;
         String password = "";
-        String encoding = "UTF-8";
+        String encoding = STD_ENCODING;
         String pdfFile = null;
         String outputFile = null;
         // Defaults to text files
@@ -207,6 +205,11 @@ public class ExtractText
                 }
                 else
                 {
+                    if (toHTML && !STD_ENCODING.equals(encoding))
+                    {
+                        encoding = STD_ENCODING;
+                        System.out.println("The encoding parameter is ignored when writing html output.");
+                    }
                     output = new OutputStreamWriter( new FileOutputStream( outputFile ), encoding );
                 }
 
@@ -241,16 +244,16 @@ public class ExtractText
                     PDEmbeddedFilesNameTreeNode embeddedFiles = names.getEmbeddedFiles();
                     if (embeddedFiles != null)
                     {
-                        Map<String,COSObjectable> embeddedFileNames = embeddedFiles.getNames();
+                        Map<String, PDComplexFileSpecification> embeddedFileNames = embeddedFiles.getNames();
                         if (embeddedFileNames != null)
                         {
-                            for (Map.Entry<String,COSObjectable> ent : embeddedFileNames.entrySet()) 
+                            for (Map.Entry<String, PDComplexFileSpecification> ent : embeddedFileNames.entrySet()) 
                             {
                                 if (debug)
                                 {
                                     System.err.println("Processing embedded file " + ent.getKey() + ":");
                                 }
-                                PDComplexFileSpecification spec = (PDComplexFileSpecification) ent.getValue();
+                                PDComplexFileSpecification spec = ent.getValue();
                                 PDEmbeddedFile file = spec.getEmbeddedFile();
                                 if (file != null && "application/pdf".equals(file.getSubtype()))
                                 {
@@ -274,7 +277,7 @@ public class ExtractText
                                     } 
                                     finally 
                                     {
-                                        subDoc.close();
+                                        IOUtils.closeQuietly(subDoc);                                       
                                     }
                                 }
                             } 
@@ -285,14 +288,8 @@ public class ExtractText
             }
             finally
             {
-                if( output != null )
-                {
-                    output.close();
-                }
-                if( document != null )
-                {
-                    document.close();
-                }
+                IOUtils.closeQuietly(output);
+                IOUtils.closeQuietly(document);
             }
         }
     }
@@ -321,19 +318,21 @@ public class ExtractText
      */
     private static void usage()
     {
-        System.err.println( "Usage: java -jar pdfbox-app-x.y.z.jar ExtractText [OPTIONS] <PDF file> [Text File]\n" +
-            "  -password  <password>        Password to decrypt document\n" +
-            "  -encoding  <output encoding> UTF-8 (default) or ISO-8859-1, UTF-16BE, UTF-16LE, etc.\n" +
-            "  -console                     Send text to console instead of file\n" +
-            "  -html                        Output in HTML format instead of raw text\n" +
-            "  -sort                        Sort the text before writing\n" +
-            "  -ignoreBeads                 Disables the separation by beads\n" +
-            "  -debug                       Enables debug output about the time consumption of every stage\n" +
-            "  -startPage <number>          The first page to start extraction(1 based)\n" +
-            "  -endPage <number>            The last page to extract(inclusive)\n" +
-            "  <PDF file>                   The PDF document to use\n" +
-            "  [Text File]                  The file to write the text to\n"
-            );
+        String message = "Usage: java -jar pdfbox-app-x.y.z.jar ExtractText [options] <inputfile> [output-text-file]\n"
+            + "\nOptions:\n"
+            + "  -password  <password>        : Password to decrypt document\n"
+            + "  -encoding  <output encoding> : UTF-8 (default) or ISO-8859-1, UTF-16BE, UTF-16LE, etc.\n"
+            + "  -console                     : Send text to console instead of file\n"
+            + "  -html                        : Output in HTML format instead of raw text\n"
+            + "  -sort                        : Sort the text before writing\n"
+            + "  -ignoreBeads                 : Disables the separation by beads\n"
+            + "  -debug                       : Enables debug output about the time consumption of every stage\n"
+            + "  -startPage <number>          : The first page to start extraction(1 based)\n"
+            + "  -endPage <number>            : The last page to extract(inclusive)\n"
+            + "  <inputfile>                  : The PDF document to use\n"
+            + "  [output-text-file]           : The file to write the text to";
+        
+        System.err.println(message);
         System.exit( 1 );
     }
 }

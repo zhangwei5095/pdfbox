@@ -17,17 +17,15 @@
 package org.apache.pdfbox.cos;
 
 import java.io.Closeable;
-import java.io.File;
 import java.io.IOException;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.HashMap;
-import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
+import org.apache.pdfbox.io.ScratchFile;
 import org.apache.pdfbox.pdfparser.PDFObjectStreamParser;
 
 /**
@@ -61,6 +59,11 @@ public class COSDocument extends COSBase implements Closeable
         new HashMap<COSObjectKey, Long>();
 
     /**
+     * List containing all streams which are created when creating a new pdf. 
+     */
+    private final List<COSStream> streams = new ArrayList<COSStream>();
+    
+    /**
      * Document trailer dictionary.
      */
     private COSDictionary trailer;
@@ -77,44 +80,27 @@ public class COSDocument extends COSBase implements Closeable
     private boolean closed = false;
 
     private boolean isXRefStream;
-    
-    private final File scratchDirectory;
-    
-    private final boolean useScratchFile;
+
+    private ScratchFile scratchFile;
 
     /**
-     * Constructor.
-     *
-     * @param useScratchFiles enables the usage of a scratch file if set to true
-     *                     
-     */
-    public COSDocument(boolean useScratchFiles)
-    {
-        this(null, useScratchFiles);
-    }
-
-    /**
-     * Constructor that will use a temporary file in the given directory
-     * for storage of the PDF streams. The temporary file is automatically
-     * removed when this document gets closed.
-     *
-     * @param scratchDir directory for the temporary file,
-     *                   or <code>null</code> to use the system default
-     * @param useScratchFiles enables the usage of a scratch file if set to true
-     * 
-     */
-    public COSDocument(File scratchDir, boolean useScratchFiles)
-    {
-        scratchDirectory = scratchDir;
-        useScratchFile = useScratchFiles;
-    }
-
-    /**
-     * Constructor. Uses memory to store stream.
+     * Constructor. Uses main memory to buffer PDF streams.
      */
     public COSDocument()
     {
-        this(false);
+        this(ScratchFile.getMainMemoryOnlyInstance());
+    }
+
+    /**
+     * Constructor that will use the provide memory handler for storage of the
+     * PDF streams.
+     *
+     * @param scratchFile memory handler for buffering of PDF streams
+     * 
+     */
+    public COSDocument(ScratchFile scratchFile)
+    {
+        this.scratchFile = scratchFile;
     }
 
     /**
@@ -124,19 +110,29 @@ public class COSDocument extends COSBase implements Closeable
      */
     public COSStream createCOSStream()
     {
-        return new COSStream( useScratchFile, scratchDirectory);
+        COSStream stream = new COSStream(scratchFile);
+        // collect all COSStreams so that they can be closed when closing the COSDocument.
+        // This is limited to newly created pdfs as all COSStreams of an existing pdf are
+        // collected within the map objectPool
+        streams.add(stream);
+        return stream;
     }
 
     /**
      * Creates a new COSStream using the current configuration for scratch files.
+     * Not for public use. Only COSParser should call this method.
      *
      * @param dictionary the corresponding dictionary
-     * 
      * @return the new COSStream
      */
     public COSStream createCOSStream(COSDictionary dictionary)
     {
-        return new COSStream( dictionary, useScratchFile, scratchDirectory );
+        COSStream stream = new COSStream(scratchFile);
+        for (Map.Entry<COSName, COSBase> entry : dictionary.entrySet())
+        {
+            stream.setItem(entry.getKey(), entry.getValue());
+        }
+        return stream;
     }
 
     /**
@@ -147,7 +143,7 @@ public class COSDocument extends COSBase implements Closeable
      * @return This will return an object with the specified type.
      * @throws IOException If there is an error getting the object
      */
-    public COSObject getObjectByType( COSName type ) throws IOException
+    public COSObject getObjectByType(COSName type) throws IOException
     {
         for( COSObject object : objectPool.values() )
         {
@@ -236,6 +232,25 @@ public class COSDocument extends COSBase implements Closeable
     }
 
     /**
+     * Returns the COSObjectKey for a given COS object, or null if there is none.
+     * This lookup iterates over all objects in a PDF, which may be slow for large files.
+     * 
+     * @param object COS object
+     * @return key
+     */
+    public COSObjectKey getKey(COSBase object)
+    {
+        for (Map.Entry<COSObjectKey, COSObject> entry : objectPool.entrySet())
+        {
+            if (entry.getValue().getObject() == object)
+            {
+                return entry.getKey();
+            }
+        }
+        return null;
+    }
+    
+    /**
      * This will print contents to stdout.
      */
     public void print()
@@ -319,66 +334,6 @@ public class COSDocument extends COSBase implements Closeable
     public void setEncryptionDictionary( COSDictionary encDictionary )
     {
         trailer.setItem( COSName.ENCRYPT, encDictionary );
-    }
-
-    /**
-     * This will return a list of signature dictionaries as COSDictionary.
-     *
-     * @return list of signature dictionaries as COSDictionary
-     * @throws IOException if no document catalog can be found
-     */
-    public List<COSDictionary> getSignatureDictionaries() throws IOException
-    {
-        List<COSDictionary> signatureFields = getSignatureFields(false);
-        List<COSDictionary> signatures = new LinkedList<COSDictionary>();
-        for ( COSDictionary dict : signatureFields )
-        {
-            COSBase dictionaryObject = dict.getDictionaryObject(COSName.V);
-            if (dictionaryObject != null)
-            {
-                signatures.add((COSDictionary)dictionaryObject);
-            }
-        }
-        return signatures;
-    }
-
-    /**
-     * This will return a list of signature fields.
-     *
-     * @return list of signature dictionaries as COSDictionary
-     * @throws IOException if no document catalog can be found
-     */
-    public List<COSDictionary> getSignatureFields(boolean onlyEmptyFields) throws IOException
-    {
-        COSObject documentCatalog = getCatalog();
-        if (documentCatalog != null)
-        {
-            COSDictionary acroForm = (COSDictionary)documentCatalog.getDictionaryObject(COSName.ACRO_FORM);
-            if (acroForm != null)
-            {
-                COSArray fields = (COSArray)acroForm.getDictionaryObject(COSName.FIELDS);
-                if (fields != null)
-                {
-                    // Some fields may contain twice references to a single field. 
-                    // This will prevent such double entries.
-                    Map<COSObjectKey, COSDictionary> signatures = new HashMap<COSObjectKey, COSDictionary>();
-                    for ( Object object : fields )
-                    {
-                        COSObject dict = (COSObject)object;
-                        if (COSName.SIG.equals(dict.getItem(COSName.FT)))
-                        {
-                            COSBase dictionaryObject = dict.getDictionaryObject(COSName.V);
-                            if (dictionaryObject == null || !onlyEmptyFields)
-                            {
-                                signatures.put(new COSObjectKey(dict), (COSDictionary)dict.getObject());
-                            }
-                        }
-                    }
-                    return new LinkedList<COSDictionary>(signatures.values());
-                }
-            }
-        }
-        return Collections.emptyList();
     }
     
     /**
@@ -487,6 +442,17 @@ public class COSDocument extends COSBase implements Closeable
                     }
                 }
             }
+            if (streams != null)
+            {
+                for(COSStream stream : streams)
+                {
+                    stream.close();
+                }
+            }
+            if (scratchFile != null)
+            {
+                scratchFile.close();
+            }
             closed = true;
         }
     }
@@ -542,25 +508,18 @@ public class COSDocument extends COSBase implements Closeable
         {
             COSStream stream = (COSStream)objStream.getObject();
             PDFObjectStreamParser parser = new PDFObjectStreamParser(stream, this);
-            try
+            parser.parse();
+            for (COSObject next : parser.getObjects())
             {
-                parser.parse();
-                for (COSObject next : parser.getObjects())
+                COSObjectKey key = new COSObjectKey(next);
+                if (objectPool.get(key) == null || objectPool.get(key).getObject() == null
+                        // xrefTable stores negated objNr of objStream for objects in objStreams
+                        || (xrefTable.containsKey(key)
+                            && xrefTable.get(key) == -objStream.getObjectNumber()))
                 {
-                    COSObjectKey key = new COSObjectKey(next);
-                    if (objectPool.get(key) == null || objectPool.get(key).getObject() == null
-                            // xrefTable stores negated objNr of objStream for objects in objStreams
-                            || (xrefTable.containsKey(key)
-                                && xrefTable.get(key) == -objStream.getObjectNumber()))
-                    {
-                        COSObject obj = getObjectFromPool(key);
-                        obj.setObject(next.getObject());
-                    }
+                    COSObject obj = getObjectFromPool(key);
+                    obj.setObject(next.getObject());
                 }
-            }
-            finally
-            {
-                parser.close();
             }
         }
     }

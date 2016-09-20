@@ -59,7 +59,7 @@ public class XrefTrailerResolver
     /**
      * A class which represents a xref/trailer object.
      */
-    private class XrefTrailerObj
+    private static class XrefTrailerObj
     {
         protected COSDictionary trailer = null;
 
@@ -88,7 +88,7 @@ public class XrefTrailerResolver
         /**
          * XRef stream type.
          */
-        STREAM;
+        STREAM
     }
     
     private final Map<Long, XrefTrailerObj> bytePosToXrefMap = new HashMap<Long, XrefTrailerObj>();

@@ -37,7 +37,7 @@ public final class Matrix implements Cloneable
         0,0,1   //  tx ty 1     tx ty 1
     };
 
-    private float[] single;
+    private final float[] single;
 
     /**
      * Constructor.
@@ -274,7 +274,7 @@ public final class Matrix implements Cloneable
      * This method multiplies this Matrix with the specified other Matrix, storing the product in the specified
      * result Matrix. By reusing Matrix instances like this, multiplication chains can be executed without having
      * to create many temporary Matrix objects.
-     * <p/>
+     * <p>
      * It is allowed to have (other == this) or (result == this) or indeed (other == result) but if this is done,
      * the backing float[] matrix values may be copied in order to ensure a correct product.
      *
@@ -389,7 +389,7 @@ public final class Matrix implements Cloneable
     /**
      * Transforms the given point by this matrix.
      *
-     * @param vector @2D vector
+     * @param vector 2D vector
      */
     public Vector transform(Vector vector)
     {
@@ -654,26 +654,25 @@ public final class Matrix implements Cloneable
     public COSArray toCOSArray()
     {
         COSArray array = new COSArray();
-        array.add(new COSFloat(0));
-        array.add(new COSFloat(1));
-        array.add(new COSFloat(3));
-        array.add(new COSFloat(4));
-        array.add(new COSFloat(6));
-        array.add(new COSFloat(7));
+        array.add(new COSFloat(single[0]));
+        array.add(new COSFloat(single[1]));
+        array.add(new COSFloat(single[3]));
+        array.add(new COSFloat(single[4]));
+        array.add(new COSFloat(single[6]));
+        array.add(new COSFloat(single[7]));
         return array;
     }
 
     @Override
     public String toString()
     {
-        StringBuffer sb = new StringBuffer( "" );
-        sb.append("[");
-        sb.append(single[0] + ",");
-        sb.append(single[1] + ",");
-        sb.append(single[3] + ",");
-        sb.append(single[4] + ",");
-        sb.append(single[6] + ",");
-        sb.append(single[7] + "]");
-        return sb.toString();
+        String sb = "" + "[" +
+                single[0] + "," +
+                single[1] + "," +
+                single[3] + "," +
+                single[4] + "," +
+                single[6] + "," +
+                single[7] + "]";
+        return sb;
     }
 }

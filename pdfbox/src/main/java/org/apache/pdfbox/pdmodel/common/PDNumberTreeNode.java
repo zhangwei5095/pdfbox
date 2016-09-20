@@ -75,17 +75,7 @@ public class PDNumberTreeNode implements COSObjectable
      * @return The cos object that matches this Java object.
      */
     @Override
-    public COSBase getCOSObject()
-    {
-        return node;
-    }
-
-    /**
-     * Convert this standard java object to a COS object.
-     *
-     * @return The cos object that matches this Java object.
-     */
-    public COSDictionary getCOSDictionary()
+    public COSDictionary getCOSObject()
     {
         return node;
     }
@@ -218,8 +208,8 @@ public class PDNumberTreeNode implements COSObjectable
         COSObjectable retval = null;
         try
         {
-            Constructor<? extends COSObjectable> ctor = valueType.getConstructor( new Class[] { base.getClass() } );
-            retval = ctor.newInstance( new Object[] { base } );
+            Constructor<? extends COSObjectable> ctor = valueType.getConstructor(base.getClass());
+            retval = ctor.newInstance(base);
         }
         catch( Throwable t )
         {
@@ -261,7 +251,7 @@ public class PDNumberTreeNode implements COSObjectable
             for (Integer key : keys)
             {
                 array.add( COSInteger.get( key ) );
-                COSObjectable obj = (COSObjectable)numbers.get( key );
+                COSObjectable obj = numbers.get( key );
                 array.add( obj );
             }
             Integer lower = null;

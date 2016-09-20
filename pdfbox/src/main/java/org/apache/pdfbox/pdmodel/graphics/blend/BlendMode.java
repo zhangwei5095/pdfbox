@@ -26,7 +26,7 @@ import java.util.Map;
 /**
  * Blend mode.
  *
- * @author Kühn & Weyh Software, GmbH
+ * @author Kühn &amp; Weyh Software GmbH
  */
 public abstract class BlendMode
 {
@@ -41,7 +41,7 @@ public abstract class BlendMode
         BlendMode result = null;
         if (cosBlendMode instanceof COSName)
         {
-            result = BLEND_MODES.get((COSName)cosBlendMode);
+            result = BLEND_MODES.get(cosBlendMode);
         }
         else if (cosBlendMode instanceof COSArray)
         {
@@ -189,7 +189,7 @@ public abstract class BlendMode
 
     private static Map<COSName, BlendMode> createBlendModeMap()
     {
-        Map<COSName, BlendMode> map = new HashMap<COSName, BlendMode>();
+        Map<COSName, BlendMode> map = new HashMap<COSName, BlendMode>(13);
         map.put(COSName.NORMAL, BlendMode.NORMAL);
         map.put(COSName.COMPATIBLE, BlendMode.COMPATIBLE);
         map.put(COSName.MULTIPLY, BlendMode.MULTIPLY);

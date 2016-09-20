@@ -180,8 +180,8 @@ public class PDEncryption
     }
 
     /**
-     * This will set the V entry of the encryption dictionary.<br /><br />
-     * See PDF Reference 1.4 Table 3.13.  <br /><br/>
+     * This will set the V entry of the encryption dictionary.<br><br>
+     * See PDF Reference 1.4 Table 3.13.  <br><br>
      * <b>Note: This value is used to decrypt the pdf document.  If you change this when
      * the document is encrypted then decryption will fail!.</b>
      *
@@ -193,7 +193,7 @@ public class PDEncryption
     }
 
     /**
-     * This will return the V entry of the encryption dictionary.<br /><br />
+     * This will return the V entry of the encryption dictionary.<br><br>
      * See PDF Reference 1.4 Table 3.13.
      *
      * @return The encryption version to use.
@@ -214,7 +214,7 @@ public class PDEncryption
     }
 
     /**
-     * This will return the Length entry of the encryption dictionary.<br /><br />
+     * This will return the Length entry of the encryption dictionary.<br><br>
      * The length in <b>bits</b> for the encryption algorithm.  This will return a multiple of 8.
      *
      * @return The length in bits for the encryption algorithm
@@ -225,8 +225,8 @@ public class PDEncryption
     }
 
     /**
-     * This will set the R entry of the encryption dictionary.<br /><br />
-     * See PDF Reference 1.4 Table 3.14.  <br /><br/>
+     * This will set the R entry of the encryption dictionary.<br><br>
+     * See PDF Reference 1.4 Table 3.14.  <br><br>
      *
      * <b>Note: This value is used to decrypt the pdf document.  If you change this when
      * the document is encrypted then decryption will fail!.</b>
@@ -239,7 +239,7 @@ public class PDEncryption
     }
 
     /**
-     * This will return the R entry of the encryption dictionary.<br /><br />
+     * This will return the R entry of the encryption dictionary.<br><br>
      * See PDF Reference 1.4 Table 3.14.
      *
      * @return The encryption revision to use.
@@ -591,6 +591,13 @@ public class PDEncryption
         return perms;
     }
 
+    /**
+     * remove CF, StmF, and StrF entries. This is to be called if V is not 4 or 5.
+     */
+    public void removeV45filters()
+    {
+        dictionary.setItem(COSName.CF, null);
+        dictionary.setItem(COSName.STM_F, null);
+        dictionary.setItem(COSName.STR_F, null);
+    }
 }
-
-    

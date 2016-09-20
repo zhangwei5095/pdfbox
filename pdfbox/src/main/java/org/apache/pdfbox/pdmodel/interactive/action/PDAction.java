@@ -69,17 +69,7 @@ public abstract class PDAction implements PDDestinationOrAction
      * @return The cos object that matches this Java object.
      */
     @Override
-    public COSBase getCOSObject()
-    {
-        return action;
-    }
-
-    /**
-     * Convert this standard java object to a COS object.
-     *
-     * @return The cos object that matches this Java object.
-     */
-    public COSDictionary getCOSDictionary()
+    public COSDictionary getCOSObject()
     {
         return action;
     }
@@ -108,24 +98,22 @@ public abstract class PDAction implements PDDestinationOrAction
 
     /**
      * This will get the type of action that the actions dictionary describes.
-     * If present, must be Action for an action dictionary.
      *
      * @return The S entry of actions dictionary.
      */
     public String getSubType()
     {
-       return action.getNameAsString( "S" );
+        return action.getNameAsString(COSName.S);
     }
 
     /**
      * This will set the type of action that the actions dictionary describes.
-     * If present, must be Action for an action dictionary.
      *
      * @param s The new type of action.
      */
     public void setSubType( String s )
     {
-       action.setName( "S", s );
+        action.setName(COSName.S, s);
     }
 
     /**

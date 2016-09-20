@@ -22,7 +22,6 @@ import org.apache.pdfbox.cos.COSDictionary;
 import org.apache.pdfbox.cos.COSName;
 import org.apache.pdfbox.cos.COSStream;
 import org.apache.pdfbox.pdmodel.common.COSObjectable;
-import org.apache.pdfbox.pdmodel.common.PDStream;
 import org.apache.pdfbox.pdmodel.graphics.color.PDColor;
 import org.apache.pdfbox.pdmodel.graphics.color.PDColorSpace;
 import org.apache.pdfbox.pdmodel.graphics.color.PDDeviceCMYK;
@@ -49,33 +48,25 @@ public class PDAppearanceCharacteristicsDictionary implements COSObjectable
         this.dictionary = dict;
     }
 
-
     /**
      * returns the dictionary.
+     * 
      * @return the dictionary
      */
-    public COSDictionary getDictionary()
+    @Override
+    public COSDictionary getCOSObject()
     {
         return this.dictionary;
     }
 
     /**
-     * {@inheritDoc}
+     * This will retrieve the rotation of the annotation widget. It must be a multiple of 90. Default is 0
      * 
-     */
-    public COSBase getCOSObject()
-    {
-        return this.dictionary;
-    }
-
-    /**
-     * This will retrieve the rotation of the annotation widget.
-     * It must be a multiple of 90. Default is 0 
      * @return the rotation
      */
     public int getRotation()
     {
-        return this.getDictionary().getInt(COSName.R, 0);
+        return this.getCOSObject().getInt(COSName.R, 0);
     }
 
     /**
@@ -85,7 +76,7 @@ public class PDAppearanceCharacteristicsDictionary implements COSObjectable
      */
     public void setRotation(int rotation)
     {
-        this.getDictionary().setInt(COSName.R, rotation);
+        this.getCOSObject().setInt(COSName.R, rotation);
     }
 
     /**
@@ -105,7 +96,7 @@ public class PDAppearanceCharacteristicsDictionary implements COSObjectable
      */
     public void setBorderColour(PDColor c)
     {
-        this.getDictionary().setItem(COSName.BC, c.toCOSArray());
+        this.getCOSObject().setItem(COSName.BC, c.toCOSArray());
     }
 
     /**
@@ -117,7 +108,7 @@ public class PDAppearanceCharacteristicsDictionary implements COSObjectable
     {
         return getColor(COSName.BG);
     }
-    
+
     /**
      * This will set the background color.
      * 
@@ -125,7 +116,7 @@ public class PDAppearanceCharacteristicsDictionary implements COSObjectable
      */
     public void setBackground(PDColor c)
     {
-        this.getDictionary().setItem(COSName.BG, c.toCOSArray());
+        this.getCOSObject().setItem(COSName.BG, c.toCOSArray());
     }
 
     /**
@@ -135,7 +126,7 @@ public class PDAppearanceCharacteristicsDictionary implements COSObjectable
      */
     public String getNormalCaption()
     {
-        return this.getDictionary().getString("CA");
+        return this.getCOSObject().getString("CA");
     }
 
     /**
@@ -145,7 +136,7 @@ public class PDAppearanceCharacteristicsDictionary implements COSObjectable
      */
     public void setNormalCaption(String caption)
     {
-        this.getDictionary().setString("CA", caption);
+        this.getCOSObject().setString("CA", caption);
     }
 
     /**
@@ -155,7 +146,7 @@ public class PDAppearanceCharacteristicsDictionary implements COSObjectable
      */
     public String getRolloverCaption()
     {
-        return this.getDictionary().getString("RC");
+        return this.getCOSObject().getString("RC");
     }
 
     /**
@@ -165,7 +156,7 @@ public class PDAppearanceCharacteristicsDictionary implements COSObjectable
      */
     public void setRolloverCaption(String caption)
     {
-        this.getDictionary().setString("RC", caption);
+        this.getCOSObject().setString("RC", caption);
     }
 
     /**
@@ -175,7 +166,7 @@ public class PDAppearanceCharacteristicsDictionary implements COSObjectable
      */
     public String getAlternateCaption()
     {
-        return this.getDictionary().getString("AC");
+        return this.getCOSObject().getString("AC");
     }
 
     /**
@@ -185,7 +176,7 @@ public class PDAppearanceCharacteristicsDictionary implements COSObjectable
      */
     public void setAlternateCaption(String caption)
     {
-        this.getDictionary().setString("AC", caption);
+        this.getCOSObject().setString("AC", caption);
     }
 
     /**
@@ -195,10 +186,10 @@ public class PDAppearanceCharacteristicsDictionary implements COSObjectable
      */
     public PDFormXObject getNormalIcon()
     {
-        COSBase i = this.getDictionary().getDictionaryObject("I");
+        COSBase i = this.getCOSObject().getDictionaryObject("I");
         if (i instanceof COSStream)
         {
-            return new PDFormXObject(new PDStream((COSStream) i), "I");
+            return new PDFormXObject((COSStream)i);
         }
         return null;
     }
@@ -210,10 +201,10 @@ public class PDAppearanceCharacteristicsDictionary implements COSObjectable
      */
     public PDFormXObject getRolloverIcon()
     {
-        COSBase i = this.getDictionary().getDictionaryObject("RI");
+        COSBase i = this.getCOSObject().getDictionaryObject("RI");
         if (i instanceof COSStream)
         {
-            return new PDFormXObject(new PDStream((COSStream) i), "RI");
+            return new PDFormXObject((COSStream)i);
         }
         return null;
     }
@@ -225,33 +216,33 @@ public class PDAppearanceCharacteristicsDictionary implements COSObjectable
      */
     public PDFormXObject getAlternateIcon()
     {
-        COSBase i = this.getDictionary().getDictionaryObject("IX");
+        COSBase i = this.getCOSObject().getDictionaryObject("IX");
         if (i instanceof COSStream)
         {
-            return new PDFormXObject(new PDStream((COSStream) i), "IX");
+            return new PDFormXObject((COSStream)i);
         }
         return null;
     }
 
     private PDColor getColor(COSName itemName)
     {
-        COSBase c = this.getDictionary().getItem(itemName);
+        COSBase c = this.getCOSObject().getItem(itemName);
         if (c instanceof COSArray)
         {
             PDColorSpace colorSpace = null;
             switch (((COSArray) c).size())
             {
-                case 1:
-                    colorSpace = PDDeviceGray.INSTANCE;
-                    break;
-                case 3:
-                    colorSpace = PDDeviceRGB.INSTANCE;
-                    break;
-                case 4:
-                    colorSpace = PDDeviceCMYK.INSTANCE;
-                    break;
-                default:
-                    break;
+            case 1:
+                colorSpace = PDDeviceGray.INSTANCE;
+                break;
+            case 3:
+                colorSpace = PDDeviceRGB.INSTANCE;
+                break;
+            case 4:
+                colorSpace = PDDeviceCMYK.INSTANCE;
+                break;
+            default:
+                break;
             }
             return new PDColor((COSArray) c, colorSpace);
         }

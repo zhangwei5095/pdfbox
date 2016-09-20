@@ -17,20 +17,26 @@
 package org.apache.pdfbox.pdmodel.interactive.annotation;
 
 import org.apache.pdfbox.cos.COSArray;
+import org.apache.pdfbox.cos.COSBase;
 import org.apache.pdfbox.cos.COSDictionary;
 import org.apache.pdfbox.cos.COSName;
 import org.apache.pdfbox.pdmodel.common.PDRectangle;
 import org.apache.pdfbox.pdmodel.graphics.color.PDColor;
+import org.apache.pdfbox.pdmodel.interactive.annotation.handlers.PDAppearanceHandler;
+import org.apache.pdfbox.pdmodel.interactive.annotation.handlers.PDCircleAppearanceHandler;
+import org.apache.pdfbox.pdmodel.interactive.annotation.handlers.PDSquareAppearanceHandler;
 
 /**
- * This is the class that represents a rectangular or eliptical annotation
- * Introduced in PDF 1.3 specification .
+ * This is the class that represents a rectangular or elliptical annotation introduced in PDF 1.3 specification .
  *
  * @author Paul King
  */
 public class PDAnnotationSquareCircle extends PDAnnotationMarkup
 {
 
+    private PDAppearanceHandler squareAppearanceHandler;
+    private PDAppearanceHandler circleAppearanceHandler;
+    
     /**
      * Constant for a Rectangular type of annotation.
      */
@@ -44,74 +50,114 @@ public class PDAnnotationSquareCircle extends PDAnnotationMarkup
      * Creates a Circle or Square annotation of the specified sub type.
      *
      * @param subType the subtype the annotation represents.
-         */
-    public PDAnnotationSquareCircle( String subType )
+     */
+    public PDAnnotationSquareCircle(String subType)
     {
         super();
-        setSubtype( subType );
+        setSubtype(subType);
     }
 
     /**
-     * Creates a Line annotation from a COSDictionary, expected to be a correct
-     * object definition.
+     * Creates a Line annotation from a COSDictionary, expected to be a correct object definition.
      *
-     * @param field
-     *            the PDF objet to represent as a field.
+     * @param field the PDF objet to represent as a field.
      */
-    public PDAnnotationSquareCircle( COSDictionary field )
+    public PDAnnotationSquareCircle(COSDictionary field)
     {
-        super( field );
+        super(field);
     }
 
-
     /**
-     * This will set interior color of the drawn area
-     * color is in DeviceRGB colo rspace.
+     * Set a custom appearance handler for generating the annotations appearance streams.
+     * 
+     * @param squareAppearanceHandler
+     */
+    public void setCustomSquareAppearanceHandler(PDAppearanceHandler squareAppearanceHandler)
+    {
+        this.squareAppearanceHandler = squareAppearanceHandler;
+    }
+    
+    /**
+     * Set a custom appearance handler for generating the annotations appearance streams.
+     * 
+     * @param circleAppearanceHandler
+     */
+    public void setCustomCircleAppearanceHandler(PDAppearanceHandler circleAppearanceHandler)
+    {
+        this.circleAppearanceHandler = circleAppearanceHandler;
+    }
+    
+    public void constructAppearances()
+    {
+        if (SUB_TYPE_SQUARE.equals(getSubtype()))
+        {
+            if (squareAppearanceHandler == null)
+            {
+                PDSquareAppearanceHandler appearanceHandler = new PDSquareAppearanceHandler(this);
+                appearanceHandler.generateAppearanceStreams();
+            }
+            else
+            {
+                squareAppearanceHandler.generateAppearanceStreams();
+            }
+        }
+        else if (SUB_TYPE_CIRCLE.equals(getSubtype()))
+        {
+            if (circleAppearanceHandler == null)
+            {
+                PDCircleAppearanceHandler appearanceHandler = new PDCircleAppearanceHandler(this);
+                appearanceHandler.generateAppearanceStreams();
+            }
+            else
+            {
+                circleAppearanceHandler.generateAppearanceStreams();
+            }
+        }
+    }
+    
+    /**
+     * This will set interior color of the drawn area color is in DeviceRGB colo rspace.
      *
      * @param ic color in the DeviceRGB color space.
      *
      */
-    public void setInteriorColor( PDColor ic )
+    public void setInteriorColor(PDColor ic)
     {
-        getDictionary().setItem(COSName.IC, ic.toCOSArray());
+        getCOSObject().setItem(COSName.IC, ic.toCOSArray());
     }
 
     /**
-     * This will retrieve the interior color of the drawn area
-     * color is in DeviceRGB color space.
+     * This will retrieve the interior color of the drawn area color is in DeviceRGB color space.
      *
-     * @return  object representing the color.
+     * @return object representing the color.
      */
     public PDColor getInteriorColor()
     {
         return getColor(COSName.IC);
     }
 
-
     /**
-     * This will set the border effect dictionary, specifying effects to be applied
-     * when drawing the line.
+     * This will set the border effect dictionary, specifying effects to be applied when drawing the line.
      *
      * @param be The border effect dictionary to set.
      *
      */
-    public void setBorderEffect( PDBorderEffectDictionary be )
+    public void setBorderEffect(PDBorderEffectDictionary be)
     {
-        getDictionary().setItem( "BE", be );
+        getCOSObject().setItem(COSName.BE, be);
     }
 
     /**
-     * This will retrieve the border effect dictionary, specifying effects to be
-     * applied used in drawing the line.
+     * This will retrieve the border effect dictionary, specifying effects to be applied used in drawing the line.
      *
      * @return The border effect dictionary
      */
     public PDBorderEffectDictionary getBorderEffect()
     {
-        COSDictionary be = (COSDictionary) getDictionary().getDictionaryObject( "BE" );
+        COSDictionary be = (COSDictionary) getCOSObject().getDictionaryObject(COSName.BE);
         if (be != null)
         {
-            return new PDBorderEffectDictionary( be );
+            return new PDBorderEffectDictionary(be);
         }
         else
         {
@@ -120,31 +166,29 @@ public class PDAnnotationSquareCircle extends PDAnnotationMarkup
     }
 
     /**
-     * This will set the rectangle difference rectangle. Giving the difference
-     * between the annotations rectangle and where the drawing occurs.
-         * (To take account of any effects applied through the BE entry forexample)
+     * This will set the rectangle difference rectangle. Giving the difference between the annotations rectangle and
+     * where the drawing occurs. (To take account of any effects applied through the BE entry forexample)
      *
      * @param rd the rectangle difference
      *
      */
-    public void setRectDifference( PDRectangle rd )
+    public void setRectDifference(PDRectangle rd)
     {
-        getDictionary().setItem( "RD", rd );
+        getCOSObject().setItem(COSName.RD, rd);
     }
 
     /**
-     * This will get the rectangle difference rectangle. Giving the difference
-     * between the annotations rectangle and where the drawing occurs.
-         * (To take account of any effects applied through the BE entry forexample)
+     * This will get the rectangle difference rectangle. Giving the difference between the annotations rectangle and
+     * where the drawing occurs. (To take account of any effects applied through the BE entry forexample)
      *
      * @return the rectangle difference
      */
     public PDRectangle getRectDifference()
     {
-        COSArray rd = (COSArray) getDictionary().getDictionaryObject( "RD" );
+        COSArray rd = (COSArray) getCOSObject().getDictionaryObject(COSName.RD);
         if (rd != null)
         {
-            return new PDRectangle( rd );
+            return new PDRectangle(rd);
         }
         else
         {
@@ -153,59 +197,53 @@ public class PDAnnotationSquareCircle extends PDAnnotationMarkup
     }
 
     /**
-     * This will set the sub type (and hence appearance, AP taking precedence) For
-     * this annotation. See the SUB_TYPE_XXX constants for valid values.
+     * This will set the sub type (and hence appearance, AP taking precedence) For this annotation. See the SUB_TYPE_XXX
+     * constants for valid values.
      *
      * @param subType The subtype of the annotation
      */
-    public void setSubtype( String subType )
+    public void setSubtype(String subType)
     {
-        getDictionary().setName( COSName.SUBTYPE, subType );
+        getCOSObject().setName(COSName.SUBTYPE, subType);
     }
 
     /**
-     * This will retrieve the sub type (and hence appearance, AP taking precedence)
-     * For this annotation.
+     * This will retrieve the sub type (and hence appearance, AP taking precedence) For this annotation.
      *
      * @return The subtype of this annotation, see the SUB_TYPE_XXX constants.
      */
     @Override
     public String getSubtype()
     {
-        return getDictionary().getNameAsString( COSName.SUBTYPE);
+        return getCOSObject().getNameAsString(COSName.SUBTYPE);
     }
 
     /**
-     * This will set the border style dictionary, specifying the width and dash
-     * pattern used in drawing the line.
+     * This will set the border style dictionary, specifying the width and dash pattern used in drawing the line.
      *
-     * @param bs the border style dictionary to set.
-     * TODO not all annotations may have a BS entry
+     * @param bs the border style dictionary to set. TODO not all annotations may have a BS entry
      *
      */
-    public void setBorderStyle( PDBorderStyleDictionary bs )
+    @Override
+    public void setBorderStyle(PDBorderStyleDictionary bs)
     {
-        this.getDictionary().setItem( "BS", bs);
+        this.getCOSObject().setItem(COSName.BS, bs);
     }
 
     /**
-     * This will retrieve the border style dictionary, specifying the width and
-     * dash pattern used in drawing the line.
+     * This will retrieve the border style dictionary, specifying the width and dash pattern used in drawing the line.
      *
-     * @return the border style dictionary.
-     * TODO not all annotations may have a BS entry
+     * @return the border style dictionary. TODO not all annotations may have a BS entry
      */
+    @Override
     public PDBorderStyleDictionary getBorderStyle()
     {
-        COSDictionary bs = (COSDictionary) this.getDictionary().getItem(COSName.BS);
-        if (bs != null)
+        COSBase bs = getCOSObject().getDictionaryObject(COSName.BS);
+        if (bs instanceof COSDictionary)
         {
-            return new PDBorderStyleDictionary( bs );
+            return new PDBorderStyleDictionary((COSDictionary) bs);
         }
-        else
-        {
-            return null;
-        }
+        return null;
     }
 
 }

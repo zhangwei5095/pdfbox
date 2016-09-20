@@ -16,6 +16,13 @@
  */
 package org.apache.pdfbox.text;
 
+import difflib.ChangeDelta;
+import difflib.DeleteDelta;
+import difflib.DiffUtils;
+import difflib.InsertDelta;
+import difflib.Patch;
+import java.io.BufferedReader;
+import java.io.BufferedWriter;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FilenameFilter;
@@ -25,7 +32,11 @@ import java.io.InputStreamReader;
 import java.io.LineNumberReader;
 import java.io.OutputStream;
 import java.io.OutputStreamWriter;
+import java.io.PrintStream;
 import java.io.Writer;
+import java.util.Iterator;
+import java.util.LinkedList;
+import java.util.List;
 
 import junit.framework.Test;
 import junit.framework.TestCase;
@@ -34,6 +45,10 @@ import junit.framework.TestSuite;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.pdfbox.pdmodel.PDDocument;
+import org.apache.pdfbox.pdmodel.TestPDPageTree;
+import org.apache.pdfbox.pdmodel.interactive.documentnavigation.destination.PDPageDestination;
+import org.apache.pdfbox.pdmodel.interactive.documentnavigation.outline.PDDocumentOutline;
+import org.apache.pdfbox.pdmodel.interactive.documentnavigation.outline.PDOutlineItem;
 
 
 /**
@@ -76,10 +91,7 @@ import org.apache.pdfbox.pdmodel.PDDocument;
  * To further research individual failures, the org.apache.pdfbox.util.TextStripper.file
  * system property may be set with the name of a single file in the "test/input"
  * directory.  In this mode, testAll() will evaluate only that file, and will
- * do so with DEBUG level logging.  You can set this property from ant by
- * defining "file", as in:
- *
- *    ant testextract -Dfile=hello.pdf
+ * do so with DEBUG level logging.
  *
  * @author Robert Dickinson
  * @author Ben Litchfield
@@ -94,7 +106,7 @@ public class TestTextStripper extends TestCase
 
     private boolean bFail = false;
     private PDFTextStripper stripper = null;
-    private final String encoding = "UTF-16LE";
+    private static final String ENCODING = "UTF-8";
 
     /**
      * Test class constructor.
@@ -113,6 +125,7 @@ public class TestTextStripper extends TestCase
     /**
      * Test suite setup.
      */
+    @Override
     public void setUp()
     {
         // If you want to test a single file using DEBUG logging, from an IDE,
@@ -174,8 +187,11 @@ public class TestTextStripper extends TestCase
                 }
             }
         }
-        else equals = ( expected == null && actual != null && actual.trim().isEmpty(  ) ) ||
-                ( actual == null && expected != null && expected.trim().isEmpty(  ) );
+        else
+        {
+            equals = (expected == null && actual != null && actual.trim().isEmpty())
+                    || (actual == null && expected != null && expected.trim().isEmpty());
+        }
         return equals;
     }
 
@@ -230,29 +246,35 @@ public class TestTextStripper extends TestCase
         //System.out.println("  " + inFile + (bSort ? " (sorted)" : ""));
         PDDocument document = PDDocument.load(inFile);
         try
-        {
-            
-            File outFile = null;
-            File expectedFile = null;
+        {            
+            File outFile;
+            File diffFile;
+            File expectedFile;
 
             if(bSort)
             {
                 outFile = new File(outDir,  inFile.getName() + "-sorted.txt");
+                diffFile = new File(outDir, inFile.getName() + "-sorted-diff.txt");
                 expectedFile = new File(inFile.getParentFile(), inFile.getName() + "-sorted.txt");
             }
             else
             {
                 outFile = new File(outDir, inFile.getName() + ".txt");
+                diffFile = new File(outDir, inFile.getName() + "-diff.txt");
                 expectedFile = new File(inFile.getParentFile(), inFile.getName() + ".txt");
             }
+            
+            // delete possible leftover
+            diffFile.delete();
 
             OutputStream os = new FileOutputStream(outFile);
             try
             {
-                os.write( 0xFF );
-                os.write( 0xFE );
+                os.write (0xEF);
+                os.write (0xBB);
+                os.write (0xBF);
 
-                Writer writer = new OutputStreamWriter(os, encoding);
+                Writer writer = new BufferedWriter(new OutputStreamWriter(os, ENCODING));
                 try
                 {
                     //Allows for sorted tests 
@@ -279,15 +301,17 @@ public class TestTextStripper extends TestCase
             if (!expectedFile.exists())
             {
                 this.bFail = true;
-                fail("FAILURE: Input verification file: " + expectedFile.getAbsolutePath() +
+                log.error("FAILURE: Input verification file: " + expectedFile.getAbsolutePath() +
                         " did not exist");
                 return;
             }
+            
+            boolean localFail = false;
 
             LineNumberReader expectedReader =
-                new LineNumberReader(new InputStreamReader(new FileInputStream(expectedFile), encoding));
+                new LineNumberReader(new InputStreamReader(new FileInputStream(expectedFile), ENCODING));
             LineNumberReader actualReader =
-                new LineNumberReader(new InputStreamReader(new FileInputStream(outFile), encoding));
+                new LineNumberReader(new InputStreamReader(new FileInputStream(outFile), ENCODING));
 
             while (true)
             {
@@ -304,7 +328,8 @@ public class TestTextStripper extends TestCase
                 if (!stringsEqual(expectedLine, actualLine))
                 {
                     this.bFail = true;
-                    fail("FAILURE: Line mismatch for file " + inFile.getName() +
+                    localFail = true;
+                    log.error("FAILURE: Line mismatch for file " + inFile.getName() +
                             " (sort = "+bSort+")" +
                             " at expected line: " + expectedReader.getLineNumber() +
                             " at actual line: " + actualReader.getLineNumber() +
@@ -320,11 +345,204 @@ public class TestTextStripper extends TestCase
                     break;
                 }
             }
+            expectedReader.close();
+            actualReader.close();
+            if (!localFail)
+            {
+                outFile.delete();
+            }
+            else
+            {
+                // https://code.google.com/p/java-diff-utils/wiki/SampleUsage
+                List<String> original = fileToLines(expectedFile);
+                List<String> revised = fileToLines(outFile);
+
+                // Compute diff. Get the Patch object. Patch is the container for computed deltas.
+                Patch patch = DiffUtils.diff(original, revised);
+
+                PrintStream diffPS = new PrintStream(diffFile, ENCODING);
+                for (Object delta : patch.getDeltas())
+                {
+                    if (delta instanceof ChangeDelta)
+                    {
+                        ChangeDelta cdelta = (ChangeDelta) delta;
+                        diffPS.println("Org: " + cdelta.getOriginal());
+                        diffPS.println("New: " + cdelta.getRevised());
+                        diffPS.println();
+                    }
+                    else if (delta instanceof DeleteDelta)
+                    {
+                        DeleteDelta ddelta = (DeleteDelta) delta;
+                        diffPS.println("Org: " + ddelta.getOriginal());
+                        diffPS.println("New: " + ddelta.getRevised());
+                        diffPS.println();
+                    }
+                    else if (delta instanceof InsertDelta)
+                    {
+                        InsertDelta idelta = (InsertDelta) delta;
+                        diffPS.println("Org: " + idelta.getOriginal());
+                        diffPS.println("New: " + idelta.getRevised());
+                        diffPS.println();
+                    }
+                    else
+                    {
+                        diffPS.println(delta);
+                    }
+                }
+                diffPS.close();
+            }
         }
         finally
         {
             document.close();
         }
+    }
+    
+    // Helper method for get the file content
+    private static List<String> fileToLines(File file)
+    {
+        List<String> lines = new LinkedList<String>();
+        String line = "";
+        try
+        {
+            BufferedReader in = new BufferedReader(new InputStreamReader(new FileInputStream(file), ENCODING));
+            while ((line = in.readLine()) != null)
+            {
+                lines.add(line);
+            }
+            in.close();
+        }
+        catch (IOException e)
+        {
+            e.printStackTrace();
+        }
+        return lines;
+    }
+
+    private int findOutlineItemDestPageNum(PDDocument doc, PDOutlineItem oi) throws IOException
+    {
+        PDPageDestination pageDest = (PDPageDestination) oi.getDestination();
+        
+        // two methods to get the page index, the result should be identical!
+        int indexOfPage = doc.getPages().indexOf(oi.findDestinationPage(doc));
+        int pageNum = pageDest.retrievePageNumber();
+        assertEquals(indexOfPage, pageNum);
+                
+        return pageNum;
+    }
+
+    /**
+     * Test whether stripping controlled by outline items works properly. The test file has 4
+     * outline items at the top level, that point to 0-based pages 0, 2, 3 and 4. We are testing
+     * text stripping by outlines pointing to 0-based pages 2 and 3, and also text stripping of the
+     * 0-based page 2. The test makes sure that the output is different to a complete strip, not
+     * empty, different to each other when different bookmark intervals are used, but identical from
+     * bookmark intervals to strips with page intervals. When fed with orphan bookmarks, stripping
+     * must be empty.
+     *
+     * @throws IOException
+     */
+    public void testStripByOutlineItems() throws IOException
+    {
+        PDDocument doc = PDDocument.load(TestPDPageTree.class.getResourceAsStream("with_outline.pdf"));
+        PDDocumentOutline outline = doc.getDocumentCatalog().getDocumentOutline();
+        Iterable<PDOutlineItem> children = outline.children();
+        Iterator<PDOutlineItem> it = children.iterator();
+        PDOutlineItem oi0 = it.next();
+        PDOutlineItem oi2 = it.next();
+        PDOutlineItem oi3 = it.next();
+        PDOutlineItem oi4 = it.next();
+
+        assertEquals(0, findOutlineItemDestPageNum(doc, oi0));
+        assertEquals(2, findOutlineItemDestPageNum(doc, oi2));
+        assertEquals(3, findOutlineItemDestPageNum(doc, oi3));
+        assertEquals(4, findOutlineItemDestPageNum(doc, oi4));
+
+        String textFull = stripper.getText(doc);
+        assertFalse(textFull.isEmpty());
+        
+        String expectedTextFull = 
+                "First level 1\n"
+                + "First level 2\n"
+                + "Fist level 3\n"
+                + "Some content\n"
+                + "Some other content\n"
+                + "Second at level 1\n"
+                + "Second level 2\n"
+                + "Content\n"
+                + "Third level 1\n"
+                + "Third level 2\n"
+                + "Third level 3\n"
+                + "Content\n"
+                + "Fourth level 1\n"
+                + "Content\n"
+                + "Content\n";
+        assertEquals(expectedTextFull, textFull.replaceAll("\r", ""));
+        
+        // this should grab 0-based pages 2 and 3, i.e. 1-based pages 3 and 4
+        // by their bookmarks
+        stripper.setStartBookmark(oi2);
+        stripper.setEndBookmark(oi3);
+        String textoi23 = stripper.getText(doc);
+        assertFalse(textoi23.isEmpty());
+        assertFalse(textoi23.equals(textFull));
+        
+        String expectedTextoi23 = 
+                "Second at level 1\n"
+                + "Second level 2\n"
+                + "Content\n"
+                + "Third level 1\n"
+                + "Third level 2\n"
+                + "Third level 3\n"
+                + "Content\n";
+        assertEquals(expectedTextoi23, textoi23.replaceAll("\r", ""));
+        
+        // this should grab 0-based pages 2 and 3, i.e. 1-based pages 3 and 4
+        // by their page numbers
+        stripper.setStartBookmark(null);
+        stripper.setEndBookmark(null);
+        stripper.setStartPage(3);
+        stripper.setEndPage(4);
+        String textp34 = stripper.getText(doc);
+        assertFalse(textp34.isEmpty());
+        assertFalse(textoi23.equals(textFull));
+        assertTrue(textoi23.equals(textp34));
+        
+        
+        // this should grab 0-based page 2, i.e. 1-based page 3
+        // by the bookmark
+        stripper.setStartBookmark(oi2);
+        stripper.setEndBookmark(oi2);
+        String textoi2 = stripper.getText(doc);
+        assertFalse(textoi2.isEmpty());
+        assertFalse(textoi2.equals(textoi23));
+        assertFalse(textoi23.equals(textFull));
+        
+        String expectedTextoi2 = 
+                "Second at level 1\n"
+                + "Second level 2\n"
+                + "Content\n";        
+        assertEquals(expectedTextoi2, textoi2.replaceAll("\r", ""));
+        
+         
+        // this should grab 0-based page 2, i.e. 1-based page 3
+        // by the page number
+        stripper.setStartBookmark(null);
+        stripper.setEndBookmark(null);
+        stripper.setStartPage(3);
+        stripper.setEndPage(3);
+        String textp3 = stripper.getText(doc);
+        assertFalse(textp3.isEmpty());
+        assertFalse(textp3.equals(textp34));
+        assertFalse(textoi23.equals(textFull));
+        assertTrue(textoi2.equals(textp3));
+        
+        // Test with orphan bookmark
+        PDOutlineItem oiOrphan = new PDOutlineItem();
+        stripper.setStartBookmark(oiOrphan);
+        stripper.setEndBookmark(oiOrphan);
+        String textOiOrphan = stripper.getText(doc);
+        assertTrue(textOiOrphan.isEmpty());
     }
 
     /**
@@ -336,6 +554,7 @@ public class TestTextStripper extends TestCase
     {
         File[] testFiles = inDir.listFiles(new FilenameFilter() 
         {
+            @Override
             public boolean accept(File dir, String name) 
             {
                 return (name.endsWith(".pdf"));
@@ -355,8 +574,7 @@ public class TestTextStripper extends TestCase
      *
      * @throws Exception when there is an exception
      */
-    public void testExtract()
-    throws Exception
+    public void testExtract() throws Exception
     {
         String filename = System.getProperty("org.apache.pdfbox.util.TextStripper.file");
         File inDir = new File("src/test/resources/input");
